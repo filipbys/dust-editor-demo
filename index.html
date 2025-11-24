@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Test Dust Editor</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta
+    name="description"
+    content="Example dust programming language editor" />
+  
+  <script>
+    /** See https://stackoverflow.com/questions/21147149/flash-of-unstyled-content-fouc-in-firefox-only-is-ff-slow-renderer */
+    let FIREFOX_FLASH_OF_UNSTYLED_CONTENT_FIX;
+  </script>
+
+  <link rel="preload" as="fetch" crossorigin href="./dust-file-editor.css"/>
+  <script type="module" src="./dust-file-editor.mjs"></script>
+  <!-- <script type="module" src="./dust-file-editor-bundle.min.js"></script> -->
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      max-width: 100%;
+      height: 100svh;
+      max-height: 100%;
+      box-sizing: border-box;
+    }
+
+    :root {
+      color-scheme: light dark;
+    }
+
+    html,
+    body {
+      background-color: hsl(228, 22%, 91%);
+      color: hsl(240, 3%, 7%);
+      color-scheme: dark;
+    }
+    
+    dust-file-editor {
+      background-color: hsl(228, 22%, 91%);
+      --code-color: hsl(240, 3%, 7%);
+      --function-call-background-color: rgba(0, 0, 0, 0.125);
+      /* --outline-colors: ["hsl(240, 3%, 7%)", "rgba(212, 0, 255, 0.5)", "rgba(0, 100, 255, 0.5)", "rgba(145, 145, 0, 0.5)"]; */
+      --outline-color-1: hsla(240, 1%, 32%, 1.00);
+      --outline-color-2: rgba(212, 0, 255, 0.5);
+      --outline-color-3: rgba(0, 100, 255, 0.5);
+      --outline-color-4: rgba(145, 145, 0, 0.5);
+
+      --line-height: 30px;
+    }
+    /* Optional styles to make it look a bit better while it's loading */
+    dust-file-editor:not(:defined) {
+      font-family: monospace;
+      line-height: var(--line-height);
+      white-space: pre;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      html,
+      body {
+        background-color: hsl(228, 5%, 15%);
+        color: hsl(228, 5%, 70%);
+        color-scheme: dark;
+      }
+      dust-file-editor {
+        background-color: hsl(228, 5%, 15%);
+        --code-color: rgb(175, 176, 182);
+        --function-call-background-color: rgba(175, 175, 175, 0.125);
+        --outline-color-1: rgba(175, 176, 182, 0.5);
+        --outline-color-2: rgba(212, 0, 255, 0.5);
+        --outline-color-3: rgba(84, 152, 255, 0.5);
+        --outline-color-4: rgba(255, 255, 68, 0.5);
+      }
+    }
+  </style>
+</head>
+<body>
+    <!-- TODO define CSS properties for the editor with @property -->
+  <!-- Optional: add "resizable" class name to make it resizable -->
+  <dust-file-editor
+    class=""
+    data-file-name="./example-programs/example.txt"
+    data-storage-id="0"
+    data-focus-on-load="program"
+    style="width: 100%; height: 100%;">( $n .$fibonacci-naive
+  =
+  ( if n <= 1
+    then n
+    else (n - 1).fibonacci-naive + (n - 2).fibonacci-naive ))
+
+// https://www.geeksforgeeks.org/tail-recursion-fibonacci/
+( .$fibonacci-tail-recursive $n $a $b
+  =
+  ( if n == 0
+    then a
+    if n == 1
+    then b
+    else .fibonacci-tail-recursive (n - 1) b (a + b) ))
+
+// https://medium.com/@adarshtyagi/fibonacci-in-constant-time-945546c9e64c
+( .$fibonacci-analytical $n
+  =
+  ($root-5 = 5.square-root)
+  in
+  // TODO: round to nearest integer
+  (1 / root-5) * (((1 + root-5) / 2)^n - ((1 - root-5) / 2)^n) )
+
+(.$fibonacci $n = .fibonacci-tail-recursive n 0 1)
+
+0.fibonacci
+1.fibonacci
+2.fibonacci
+3.fibonacci
+4.fibonacci
+5.fibonacci
+19.fibonacci
+19.fibonacci-naive
+
+25.fibonacci-naive
+25.fibonacci
+25.fibonacci-analytical
+
+29.fibonacci-naive // takes about 1-2 seconds to compute
+29.fibonacci
+29.fibonacci-analytical
+
+30.fibonacci-naive // takes about 1-2 seconds to compute
+30.fibonacci
+30.fibonacci-analytical
+
+100.fibonacci
+200.fibonacci
+200.fibonacci-analytical
+// 354_224_848_179_261_915_075
+
+($a = 7)
+($b = 42)
+((a + b) * 2)
+(a + b - 2)
+
+// (.$foo as = bar)
+
+“strings “inside “strings”””
+
+( $x =
+  "strings
+   over
+   multiple
+   lines"   )
+( $y =
+  "
+   foo    bar
+   a multi-line string, where the first and last characters are newlines
+
+   ")
+( $bar =
+  "strings
+   over
+   multiple
+   lines
+   with
+   errors"   )
+
+[ a b
+  bar ]
+
+// ({foo ({bar ({baz})})})
+
+($pi = 3.1415)
+(.$area $r = pi * r^2)
+(.$circumference $r = 2 * pi * r)
+($r = 2)
+(.circumference r)
+r.circumference
+
+($exclamation = "!")
+( $person =
+  { ( var $first-name = "Anna" )
+    ( $last-name = "Bystricky" )
+    ( .$shout $phrase = phrase.to-uppercase ++ exclamation )
+    ( self.$name = "{self.first-name} {self.last-name}" )
+    ( self .$present $topic
+      =
+      "Hello, my name is {self.name}. " ++
+      “Today I will present "{topic}".” )                 })
+(person .shout "hello?")
+person.name
+(person .set! {($first-name = "Ollie")})
+person.name
+(person .present "On the origin of species")
+
+[1 "two" 3]
+
+($nested-array = [["arrays" "inside"] ["other arrays"]])
+(nested-array.0.1 ++ " " ++ nested-array.1.0)
+{($a = 42) ($b = "foo")}
+
+/*
+// (set person = person .with {($first-name = "Ollie")})
+person.name
+// TODO enable: (set person .with= {($first-name = "Ollie")})
+// also possibly: (within person (set first-name = "Ollie"))
+*/
+
+(var $array = [0 1 22 333])
+(var $array-42 = [0 1 22 333])
+( $another-array
+  =
+  [ 42
+    "The “first” element is {array.0}"
+    “strings “inside “strings””” 
+    (array.2 + array.3)               ])
+($array-at = array.at)
+array.0
+array.1
+array.2
+array.3
+array.-1
+array.-2
+array.-3
+array.-4
+
+(.array-at 3)
+
+(array .at 3)
+// TODO the fact that `(array .at 3)` works but `(array.at 3)` gives an error is confusing (you have to write `(.(array.at) 3)`)... Maybe, if it encounters a () group without any explicit functions, it should assert that the first one is a function and call that.
+
+(λ $x = x + 2)
+// (if 4 < 5 then .$ else "wtf?")
+
+// ($ + 2)
+
+(λ $x $y $z = if x then .y else .z)
+// (if $x then .$y else .$z)
+
+(.$add $x $y = x + y)
+(.add 2 3)
+($add-two = (.add 2))
+42.add-two
+
+(.$concat-three-strings $a $b $c = a ++ b ++ c)
+($concat-two-strings = .concat-three-strings "first ")
+($concat-last-string = .concat-two-strings "second ")
+(.concat-last-string "third")
+
+(set array = [1 "two" 3.0])
+(array .append 4 .prepend 0)
+array
+
+(array .append! 4 .prepend! 0)
+array
+
+(array .append-all! [5 6] .prepend-all [-1 -2])
+array
+
+(array .with 2 "two?")
+(array .set! 2 "TWO!!")
+
+(array .with -2 "five?")
+(array .set! -2 "FIVE!!")
+
+($num = 42)
+-num
+
+/* 
+  Comments
+  /*
+    Inside
+    /* Comments */
+  */
+*/
+/*
+  // TODO enable the following as well:
+  (person .set! "first-name" "Ollie")
+  (set person.first-name = "Ollie")
+  person.name
+
+  person.type
+  // (person.first-name ++ " " ++ person.last-name)
+*/
+( (var $n) .$factorial 
+  =
+  ( if n < 0 then
+      -((-n).factorial)
+    else
+      (var $result = 1)
+      in
+      ( loop
+        ( if n > 1 then 
+          ( do
+            (set result = result * n)
+            (set n = n - 1)          )
+          else
+            (return result)           ))))
+($test = 5)
+-test
+
+5.factorial
+-5.factorial
+
+( do
+  (var $n = 4)
+  (var $factorial = 1)
+  ( while n > 1 do
+      (set factorial = factorial * n)
+      (set n = n - 1)                )
+  (return factorial)                  )
+
+( do $bar
+  ($foo = 42)
+  ( $baz
+    =
+    ( do
+      ( if 42 > 43 then 
+          (return foo from bar)
+        else
+          (return foo * 2 from baz))))
+  (return baz)                        )
+
+
+
+
+</dust-file-editor>
+</body>
+
+</html>

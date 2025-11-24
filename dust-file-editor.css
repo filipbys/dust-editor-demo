@@ -1,0 +1,418 @@
+/* TODO see if anything can be removed to reduce the file size. */
+:host {
+    box-sizing: border-box;
+    overflow: hidden;
+    contain: paint;
+
+    --border-color: color-mix(in srgb, var(--code-color) 75%, transparent);
+    --border-width: 2px;
+    display: inline-grid;
+    /* grid-template-areas:
+        "a b"
+        "c c"; */
+    grid-template-columns: max-content 1fr;
+    grid-template-rows: 1fr max-content;
+
+    font-family: monospace;
+
+    font-size: 16px;
+    --line-height: 30px;
+
+    --string-text-color: color-mix(in srgb, var(--code-color) 50%, orange);
+    --character-text-color: color-mix(in srgb, var(--code-color) 50%, rgb(255, 215, 0));
+    --outline-color-1: var(--code-color, currentcolor);
+
+    --cursor-width: 1px;
+    --cursor-blink-rate: 1.2s;
+    --selection-background-color: rgba(50, 50, 255, 0.5);
+
+    --line-hover-color: rgba(100, 100, 200, 0.25);
+
+    --grid-resizing-background-color: rgb(97, 97, 255);
+    --grid-resizer-width: 25px;
+    @media (any-pointer: fine) {
+        --grid-resizer-width: 10px;
+    }
+}
+
+:host(.resizable:not(:is(:fullscreen, :-webkit-fullscreen))) {
+    resize: both;
+    max-width: 100%;
+    max-height: 100%;
+    border: var(--border-width) solid var(--border-color);
+}
+
+.grid-resizer {
+    touch-action: none;
+    box-sizing: border-box;
+}
+
+/* TODO use :host:has(> .results) instead once FireFox and Safari support it */
+:host(.results-shown) {
+    --program-fr: 1fr;
+    grid-template-columns: max-content var(--program-fr) var(--grid-resizer-width) 1fr;
+
+    & .grid-resizer {
+        width: --grid-resizer-width;
+        height: 100%;
+        border-inline: var(--border-width) solid var(--border-color);
+        cursor: ew-resize;
+    }
+}
+:host(.results-shown.horizontal-results-divider) {
+    --program-fr: 1fr;
+    grid-template-columns: max-content 1fr;
+    grid-template-rows: var(--program-fr) var(--grid-resizer-width) 1fr max-content;
+
+    & .grid-resizer {
+        grid-row: 2;
+        height: --grid-resizer-width;
+        width: 100%;
+        border-inline: none;
+        border-block: var(--border-width) solid var(--border-color);
+        cursor: ns-resize;
+    }
+}
+
+
+.results {
+    white-space: pre;
+    position: relative;
+    overflow-y: auto;
+
+    & > .line-numbers {
+        cursor: default;
+    }
+
+    &.cursor-pointer * {
+        cursor: pointer;
+    }
+}
+
+:host(.results-shown.horizontal-results-divider) > .results {
+    grid-row: 3;
+}
+
+.toolbar, .status-bar {
+    background-color: color-mix(in srgb, currentColor 20%, transparent);
+}
+
+.toolbar {
+    user-select: none;
+    -webkit-user-select: none;
+    box-sizing: border-box;
+    position: sticky;
+    top: 0;
+    padding: 2px;
+    padding-top: 0.5ch;
+    z-index: 2;
+    opacity: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 1ch;
+    align-items: center;
+    justify-content: start;
+    grid-row: 1 / span 4;
+    border-inline-end: var(--border-width) solid var(--border-color);
+
+    & > button {
+        width: 2.5ch;
+        height: 2.5ch;
+        position: relative;
+
+        & svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+    }
+}
+
+.status-bar {
+    grid-column: 2 / span 3;
+    grid-row: 4;
+    display: flex;
+    justify-content: space-between;
+
+    & > *:not(:empty) {
+        padding-inline: 0.5ch;
+        margin-inline: 0.5ch;
+        border-radius: 4px;
+        background-color: color-mix(in srgb, currentColor 20%, transparent);
+    }
+}
+
+.selection-indicator {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+
+.run-status {
+    flex-shrink: 0;
+    display: inline-flex;
+    gap: 0.75ch;
+    align-items: center;
+
+    & > svg {
+        width: 1.5ch;
+        height: 1.5ch;
+    }
+    
+    & > button {
+        width: 1.5em;
+        height: 1em;
+
+        & > svg {
+            width: 100%;
+            height: 100%;
+            fill: currentColor;
+        }
+    }
+}
+
+.cursor, .highlighted-range {
+    white-space: pre;
+    position: absolute;
+    top: 0px;
+    box-sizing: border-box;
+    display: inline-block;
+    color: rgba(0,0,0,0);
+    line-height: var(--line-height);
+    margin-inline-start: var(--line-count-margin);
+}
+
+.cursor {
+    border-inline-start: var(--cursor-width) solid var(--code-color);
+    animation: blink-cursor var(--cursor-blink-rate) step-end infinite;
+}
+
+.highlighted-range * {
+    background-color: var(--selection-background-color);
+}
+
+@keyframes blink-cursor {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+.contents {
+    position: relative;
+    overflow-y: auto;
+    flex: 1;
+
+    --line-count-margin: 5ch;
+    --program-width: 0px;
+    --program-height: 0px;
+
+    & > .line-numbers {
+        cursor: pointer;
+    }
+
+    &:not(:focus-within) > .line-numbers {
+        opacity: 0.5;
+    }
+}
+
+.program-container, .outlines {
+    position: absolute;
+    top: 0;
+    width: var(--program-width);
+    height: var(--program-height);
+    margin-inline-start: calc(var(--line-count-margin));
+}
+.program-container {
+    /* Ensures the program takes up all the available space so that click events go to it instead of accidentally going to the line number (e.g. if the user clicks to the right of the longest line, it should put the cursor at the end of that line, not select the whole line as if they had clicked that line's number) */
+    min-width: calc(100% - var(--line-count-margin));
+
+    &:focus {
+        outline: none;
+    }
+
+}
+
+button {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+
+    border: none;
+    border-radius: 4px;
+    padding-inline: 4px;
+    margin: 0;
+    background-color: color-mix(in srgb, currentColor 20%, transparent);
+
+    font: inherit;
+    cursor: pointer;
+    color: inherit;
+
+    vertical-align: middle;
+
+    &:hover {
+        background-color: color-mix(in srgb, currentColor 30%, transparent);
+    }
+    &[disabled] {
+        background-color: color-mix(in srgb, black 20%, transparent);
+        color: color-mix(in srgb, currentColor 30%, transparent);
+        cursor: default;
+    }
+}
+button:active, button.action-performed {
+    background-color: color-mix(in srgb, currentColor 40%, transparent);
+}
+
+.undo-redo {
+    padding: 2px;
+    border: 1px solid currentColor;
+    border-radius: 7px;
+    cursor: default;
+    flex-shrink: 0;
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1ch;
+}
+
+.line-numbers, .program-container {
+    line-height: var(--line-height);
+}
+
+.line-numbers {
+    position: sticky;
+    left: 0;
+    white-space: pre;
+    height: var(--program-height);
+
+    &>* {
+        outline: 0.25px solid color-mix(in srgb, currentColor 10%, transparent);
+        opacity: 0.5;
+        position: relative;
+    }
+    &>:hover {
+        background-color: var(--line-hover-color);
+        opacity: 1;
+        font-weight: bold;
+    }
+    &>.active {
+        opacity: 1;
+        font-weight: bold;
+    }
+
+    & svg {
+        width: 1.5ch;
+        height: 1.5ch;
+        position: absolute;
+        left: 0.25ch;
+
+        /* Put it slightly north of center so it looks more aligned with the numbers. */
+        top: calc((var(--line-height) - 1.5ch)/2 - 0.1ch);
+    }
+}
+
+
+.outlines * {
+    /* Adding the --outline-stroke variable as an indirection (rather than setting `style.stroke` directly) allows classes like "function_call" to override the `stroke` (e.g. to `none`) */
+    stroke: var(--outline-stroke);
+}
+
+.outlines rect, .outlines path {
+    fill: none;
+    stroke-width: 1;
+}
+
+rect.in_expression, rect.function_call {
+    fill: var(--function-call-background-color);
+    stroke: none;
+}
+
+
+.program-container {
+    /* border-inline-start: var(--border-width) solid var(--border-color); */
+    /* padding-inline-start: 0.5ch; */
+
+    box-sizing: border-box;
+    color: var(--code-color);
+    display: inline-block;
+    white-space: pre;
+    cursor: text;
+    contain: paint;
+
+    & span:hover {
+        background-color: rgba(100, 100, 200, 0.25);
+    }
+}
+
+/* Elements use the [title] attribute to report errors */
+.program-container:not(.editing) [title] {
+    text-decoration-line: underline;
+    text-decoration-style: wavy;
+    text-decoration-color: red;
+    text-decoration-skip-ink: none;
+}
+
+.gap {
+    color: color-mix(in srgb, var(--code-color) 10%, transparent); 
+}
+
+.integer_literal, .decimal_literal {
+    color: color-mix(in srgb, var(--code-color) 75%, blue);
+}
+
+.string, .fancy_string, .french_string {
+    color: color-mix(in srgb, var(--string-text-color) 50%, transparent);
+}
+.text {
+    color: var(--string-text-color);
+}
+
+.character_literal {
+    color: color-mix(in srgb, var(--character-text-color) 50%, transparent);
+}
+.character {
+    color: var(--character-text-color);
+}
+
+.keyword, .dollar_sign {
+    color: color-mix(in srgb, var(--code-color) 50%, red 50%);
+    font-weight: bold;
+}
+
+.operator {
+    color: color-mix(in srgb, var(--code-color) 50%, green 50%);
+    font-weight: bold;
+}
+
+.identifier_declaration {
+    font-style: italic;
+    &.identifier {
+        text-decoration: underline;
+    }
+}
+
+.function_called {
+    font-weight: bold;
+}
+
+.line_comment, .block_comment {
+    color: color-mix(in srgb, var(--code-color) 60%, transparent);
+    opacity: 0.60;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.spinning {
+    display: inline-block;
+    animation: spin 2s linear infinite;
+}
