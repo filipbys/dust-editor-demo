@@ -4,11 +4,11 @@
 <head>
   <title>Test Dust Editor</title>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
   <meta
     name="description"
     content="Example dust programming language editor" />
-  
+
   <script>
     /** See https://stackoverflow.com/questions/21147149/flash-of-unstyled-content-fouc-in-firefox-only-is-ff-slow-renderer */
     let FIREFOX_FLASH_OF_UNSTYLED_CONTENT_FIX;
@@ -24,8 +24,8 @@
       padding: 0;
       width: 100vw;
       max-width: 100%;
-      height: 100svh;
-      max-height: 100%;
+      height: 100dvh;
+      max-height: 100dvh;
       box-sizing: border-box;
     }
 
@@ -86,7 +86,14 @@
     data-file-name="./example-programs/example.txt"
     data-storage-id="0"
     data-focus-on-load="program"
-    style="width: 100%; height: 100%;">( $n .$fibonacci-naive
+    style="width: 100%; height: 100%;">(1 + 2 - (3 * 4))
+
+[1 2 3 4]
+
+[ 1 2
+  3 4 ]
+
+( $n .$fibonacci-naive
   =
   ( if n <= 1
     then n
@@ -389,9 +396,125 @@ var INVALID_STRING_ERROR = err(PARSE_NUMBER_ERROR__INVALID_STRING);
 var OUT_OF_BOUNDS_ERROR = err(PARSE_NUMBER_ERROR__OUT_OF_BOUNDS);
 var CANNOT_STRINGIFY_ERROR = err(JSON_ERROR__CANNOT_STRINGIFY);
 
+// platform.mjs
+var specialKeyName = (
+  // NOTE: clean up if https://developer.mozilla.org/en-US/docs/Web/API/Navigator/userAgentData becomes standard
+  /** @type {{readonly userAgentData?: {readonly platform: string}}} */
+  (navigator.userAgentData?.platform ?? navigator.platform).includes("Mac") ? "\u2318" : "Ctrl"
+);
+var specialKeyPressed = specialKeyName === "\u2318" ? (event) => event.metaKey : (event) => event.ctrlKey;
+var isMobile = !matchMedia("(pointer: fine)").matches;
+var updateNativeSelection = (state) => {
+  const selection = document.getSelection(), { start, end } = state.selectedRange;
+  let startNode, startOffset = 0;
+  {
+    let index = 0;
+    const walker = document.createTreeWalker(state.program, NodeFilter.SHOW_TEXT);
+    for (let node; node = walker.nextNode(); ) {
+      const len = (
+        /** @type {Text} */
+        node.data.length
+      );
+      if (index <= start && start < index + len) {
+        startNode = node;
+        startOffset = start - index;
+        break;
+      }
+      index += len;
+    }
+  }
+  let endNode, endOffset = 0;
+  {
+    let index = 0;
+    const walker = document.createTreeWalker(state.program, NodeFilter.SHOW_TEXT);
+    for (let node; node = walker.nextNode(); ) {
+      const len = (
+        /** @type {Text} */
+        node.data.length
+      );
+      if (index <= end && end < index + len) {
+        endNode = node;
+        endOffset = end - index;
+        break;
+      }
+      index += len;
+    }
+  }
+  if (!startNode || !endNode || !selection) {
+    console.error(`Failed to find start or end node start=${start}, end=${end}, or document.getSelection() returned null`, startNode, endNode, selection, state.editor);
+    return;
+  }
+  const ranges = selection.getComposedRanges({
+    shadowRoots: [
+      state.shadowRoot
+    ]
+  });
+  if (ranges.length === 1 && startNode === ranges[0].startContainer && startOffset === ranges[0].startOffset && endNode === ranges[0].endContainer && endOffset === ranges[0].endOffset) {
+    return;
+  }
+  selection.setBaseAndExtent(startNode, startOffset, endNode, endOffset);
+};
+var updateVirtualSelection = (state) => {
+  const selection = document.getSelection();
+  if (!selection) {
+    console.error(`document.getSelection() returned null`);
+    return;
+  }
+  const ranges = selection.getComposedRanges({
+    shadowRoots: [
+      state.shadowRoot
+    ]
+  });
+  if (ranges.length !== 1) {
+    return;
+  }
+  const range = ranges[0];
+  if (!state.program.contains(range.startContainer) || !state.program.contains(range.endContainer)) {
+    return;
+  }
+  {
+    let index = 0;
+    const walker = document.createTreeWalker(state.program, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      if (node === range.startContainer) {
+        state.selectedRange.start = index + range.startOffset;
+        break;
+      }
+      index += /** @type {Text} */
+      node.data.length;
+    }
+    if (!node) {
+      console.error(`Failed to find start node in program`, node);
+    }
+  }
+  {
+    let index = 0;
+    const walker = document.createTreeWalker(state.program, NodeFilter.SHOW_TEXT);
+    let node;
+    while (node = walker.nextNode()) {
+      if (node === range.endContainer) {
+        state.selectedRange.end = index + range.endOffset;
+        break;
+      }
+      index += /** @type {Text} */
+      node.data.length;
+    }
+    if (!node) {
+      console.error(`Failed to find end node in program`, node);
+    }
+  }
+};
+
 // selected-range-view.mjs
 var drawSelectedRange = (state) => {
-  const { cursor, highlightedRange, selectedRange, text, characterHeight } = state, endPoint = findPoint(text, selectedRange.end), newActiveLine = state.lineNumbers.children[endPoint.row];
+  if (isMobile) {
+    const { selectedRange: { start, end }, text: text2 } = state;
+    updateIndicator(state, start === end ? null : findPoint(text2, start), findPoint(text2, end));
+    updateNativeSelection(state);
+    return;
+  }
+  const { cursor, highlightedRange, selectedRange, text, characterHeight } = state, endPoint = findPoint(text, selectedRange.end), newActiveLine = state.lineNumbers.childNodes[endPoint.row];
   if (state.lineWithCursor !== newActiveLine) {
     state.lineWithCursor?.removeAttribute("class");
     newActiveLine.className = "active";
@@ -402,7 +525,7 @@ var drawSelectedRange = (state) => {
   cursor.style.translate = `${endPoint.column}ch calc(${endPoint.row + 0.5}lh - ${characterHeight / 2}px)`;
   state.program.before(cursor);
   if (selectedRange.start === selectedRange.end) {
-    state.selectionIndicator.data = `Line ${endPoint.row + 1}, Column ${endPoint.column + 1}`;
+    updateIndicator(state, null, endPoint);
     highlightedRange.remove();
     cursor.scrollIntoView({
       block: "nearest",
@@ -411,6 +534,7 @@ var drawSelectedRange = (state) => {
     return;
   }
   const startPoint = findPoint(text, selectedRange.start);
+  updateIndicator(state, startPoint, endPoint);
   let highlightStartPoint, highlightStart, highlightEnd;
   if (selectedRange.start < selectedRange.end) {
     highlightStartPoint = startPoint;
@@ -421,8 +545,6 @@ var drawSelectedRange = (state) => {
     highlightStart = selectedRange.end;
     highlightEnd = selectedRange.start;
   }
-  const selectedCount = highlightEnd - highlightStart;
-  state.selectionIndicator.data = `Line ${startPoint.row + 1}, Column ${startPoint.column + 1} -> Line ${endPoint.row + 1}, Column ${endPoint.column + 1} (${selectedCount} character${selectedCount === 1 ? "" : "s"})`;
   let backgroundText = text.slice(highlightStart, highlightEnd);
   while (backgroundText.includes("\n\n")) {
     backgroundText = backgroundText.replaceAll("\n\n", "\n_\n");
@@ -441,6 +563,14 @@ var drawSelectedRange = (state) => {
     inline: "nearest"
   });
 };
+var updateIndicator = (state, start, end) => {
+  if (!start) {
+    state.selectionIndicator.data = `Line ${end.row + 1}, Column ${end.column + 1}`;
+    return;
+  }
+  const range = state.selectedRange, selectedCount = Math.abs(range.end - range.start);
+  state.selectionIndicator.data = `Line ${start.row + 1}, Column ${start.column + 1} -> Line ${end.row + 1}, Column ${end.column + 1} (${selectedCount} character${selectedCount === 1 ? "" : "s"})`;
+};
 var findPoint = (text, index) => {
   let lastNewLineIndexPlus1 = 0, row = 0;
   do {
@@ -455,6 +585,25 @@ var findPoint = (text, index) => {
     row,
     column: index - lastNewLineIndexPlus1
   };
+};
+var setUpSelectionOnMobile = (state, signal) => {
+  const selection = document.getSelection();
+  if (!isMobile) {
+    return;
+  }
+  if (!selection) {
+    console.error(`document.getSelection() returned null`);
+    return;
+  }
+  console.warn(`TODO add "desktop mode" option in settings page`);
+  state.program.contentEditable = "plaintext-only";
+  document.addEventListener("selectionchange", () => {
+    updateVirtualSelection(state);
+    const { selectedRange: { start, end }, text } = state;
+    updateIndicator(state, start === end ? null : findPoint(text, start), findPoint(text, end));
+  }, {
+    signal
+  });
 };
 
 // ../parser/accessors/type-checks.mjs
@@ -2071,6 +2220,23 @@ var setPropertyIfChanged = (style, name, value) => {
   }
 };
 
+// temporarily-add-class.mjs
+var MILLISECONDS_PER_FRAME = 16.67;
+var temporarilyAddClass = function(milliseconds, element) {
+  const existingTimeoutID = timeoutIDs.get(element);
+  if (existingTimeoutID !== void 0) {
+    clearTimeout(existingTimeoutID);
+  } else {
+    element.classList.add(this);
+  }
+  timeoutIDs.set(element, setTimeout(removeClass.bind(this, element), milliseconds));
+};
+var removeClass = function(element) {
+  element.classList.remove(this);
+  timeoutIDs.delete(element);
+};
+var timeoutIDs = /* @__PURE__ */ new Map();
+
 // line-numbers.mjs
 var LINE_COUNT_MARGIN = "--line-count-margin";
 var updateLineNumbers = (lineNumbers, container, lineCount) => {
@@ -2082,7 +2248,7 @@ var updateLineNumbers = (lineNumbers, container, lineCount) => {
   if (container.style.getPropertyValue(LINE_COUNT_MARGIN) !== lineCountMargin) {
     container.style.setProperty(LINE_COUNT_MARGIN, lineCountMargin);
     let lineNumber = 1;
-    for (const lineDiv of lineNumbers.children) {
+    for (const lineDiv of lineNumbers.childNodes) {
       lineDiv.firstChild.data = String(lineNumber).padStart(lineCountWidth);
       lineNumber++;
     }
@@ -2093,6 +2259,28 @@ var updateLineNumbers = (lineNumbers, container, lineCount) => {
   for (; lineElementCount < lineCount; lineElementCount++) {
     lineNumbers.append(createTextElement("div", String(lineElementCount + 1).padStart(lineCountWidth)));
   }
+};
+var FLASH_LINE_BACKGROUND = "flash-line-background";
+var FLASH_DURATION = MILLISECONDS_PER_FRAME * 6;
+var scrollToLine = (state, container, lineNumbers, row, adjustment) => {
+  const top = row * state.lineHeight + adjustment, lineNumber = lineNumbers && lineNumbers.childNodes[row];
+  if (container.scrollTop === top) {
+    if (!lineNumber) {
+      return;
+    }
+    temporarilyAddClass.call(FLASH_LINE_BACKGROUND, FLASH_DURATION, lineNumber);
+    return;
+  }
+  container.scrollTo({
+    top,
+    behavior: state.resultsScrollBehavior
+  });
+  if (!lineNumber) {
+    return;
+  }
+  container.addEventListener("scrollend", temporarilyAddClass.bind(FLASH_LINE_BACKGROUND, FLASH_DURATION, lineNumber), {
+    once: true
+  });
 };
 
 // workers/constants.mjs
@@ -2226,85 +2414,12 @@ var patchElement = (shape, realNode) => {
   return realNode;
 };
 
-// grid-resizer.mjs
+// grid-orientation.mjs
 var HORIZONTAL_RESULTS_DIVIDER = "horizontal-results-divider";
-var PROGRAM_FR = "--program-fr";
-var programFrLocalStorageKey = (state) => `${state.localStorageID} ${PROGRAM_FR}`;
 var resultsDividerIsVertical = (state) => !state.editor.classList.contains(HORIZONTAL_RESULTS_DIVIDER);
-var setUpGridResizer = (state) => {
-  const stored = localStorage.getItem(programFrLocalStorageKey(state));
-  if (stored !== null) {
-    state.editor.style.setProperty(PROGRAM_FR, stored);
-  }
-  state.gridResizer.addEventListener("pointerdown", resizeStart.bind(state), {
-    capture: true
-  });
-  new ResizeObserver(updateResultsDividerOrientation.bind(state)).observe(state.editor);
-};
-var resizeStart = function(event) {
-  if (event.button !== 0) {
-    return;
-  }
-  event.preventDefault();
-  const initialCursor = this.editor.style.cursor;
-  let resizeFn;
-  if (resultsDividerIsVertical(this)) {
-    resizeFn = resizeLeftRight;
-    this.editor.style.cursor = "ew-resize";
-  } else {
-    resizeFn = resizeUpDown;
-    this.editor.style.cursor = "ns-resize";
-  }
-  const abortController = new AbortController(), resizeEndFn = resizeEnd.bind(this, event.pointerId, abortController, initialCursor), options = {
-    signal: abortController.signal
-  }, resizer = this.gridResizer;
-  resizer.style.backgroundColor = "var(--grid-resizing-background-color)";
-  resizer.setPointerCapture(event.pointerId);
-  resizer.addEventListener("pointermove", resizeFn.bind(this, event.pointerId), options);
-  resizer.addEventListener("pointerup", resizeEndFn, options);
-  resizer.addEventListener("pointercancel", resizeEndFn, options);
-};
-var resizeEnd = function(pointerId, abortController, initialCursor, event) {
-  if (event.pointerId !== pointerId) {
-    return;
-  }
-  debug?.log(`stopped resizing due to "${event.type}"`, event);
-  abortController.abort();
-  this.gridResizer.style.removeProperty("background-color");
-  if (initialCursor) {
-    this.editor.style.cursor = initialCursor;
-  } else {
-    this.editor.style.removeProperty("cursor");
-  }
-  localStorage.setItem(programFrLocalStorageKey(this), this.editor.style.getPropertyValue(PROGRAM_FR));
-};
-var resizeLeftRight = function(pointerId, event) {
-  if (event.pointerId !== pointerId) {
-    return;
-  }
-  setProgramFr(this, {
-    start: this.contents.getBoundingClientRect().left,
-    end: this.results.getBoundingClientRect().right,
-    pointer: event.clientX
-  });
-};
-var resizeUpDown = function(pointerId, event) {
-  if (event.pointerId !== pointerId) {
-    return;
-  }
-  setProgramFr(this, {
-    start: this.contents.getBoundingClientRect().top,
-    end: this.results.getBoundingClientRect().bottom,
-    pointer: event.clientY
-  });
-};
-var setProgramFr = (state, { start, end, pointer }) => {
-  const fraction = Math.max(0.1, Math.min((pointer - start) / (end - start), 0.9));
-  state.editor.style.setProperty(PROGRAM_FR, `${fraction / (1 - fraction)}fr`);
-};
 var updateResultsDividerOrientation = function() {
   let availableWidth;
-  if (resultsShown(this) && resultsDividerIsVertical(this)) {
+  if (this.results.parentNode && resultsDividerIsVertical(this)) {
     availableWidth = this.results.getBoundingClientRect().right - this.contents.getBoundingClientRect().left;
   } else {
     availableWidth = this.contents.getBoundingClientRect().width;
@@ -2378,40 +2493,6 @@ var eyeIcon = svg({
 var eyeCrossedOutIcon = svg({
   viewBox: "0 0 16 16"
 }, path("m10.79 12.912-1.614-1.615a3.5 3.5 0 0 1-4.474-4.474l-2.06-2.06C.938 6.278 0 8 0 8s3 5.5 8 5.5a7.029 7.029 0 0 0 2.79-.588zM5.21 3.088A7.028 7.028 0 0 1 8 2.5c5 0 8 5.5 8 5.5s-.939 1.721-2.641 3.238l-2.062-2.062a3.5 3.5 0 0 0-4.474-4.474L5.21 3.089z"), path("M5.525 7.646a2.5 2.5 0 0 0 2.829 2.829l-2.83-2.829zm4.95.708-2.829-2.83a2.5 2.5 0 0 1 2.829 2.829zm3.171 6-12-12 .708-.708 12 12-.708.708z"));
-
-// platform.mjs
-var specialKeyName = (
-  // NOTE: clean up if https://developer.mozilla.org/en-US/docs/Web/API/Navigator/userAgentData becomes standard
-  /** @type {{readonly userAgentData?: {readonly platform: string}}} */
-  (navigator.userAgentData?.platform ?? navigator.platform).includes("Mac") ? "\u2318" : "Ctrl"
-);
-var specialKeyPressed = specialKeyName === "\u2318" ? (event) => event.metaKey : (event) => event.ctrlKey;
-var specializeBasedOnDeviceType = (state, signal) => {
-  const selection = document.getSelection(), isMobile = (console.warn(`TODO detect mobile`), true);
-  console.warn(`TODO add "desktop mode" option in settings page`);
-  if (!selection || !isMobile) {
-    return;
-  }
-  state.program.contentEditable = "plaintext-only";
-  state.program.style.caretColor = "transparent";
-  state.program.addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-  }, {
-    signal
-  });
-  document.addEventListener("selectionchange", (event) => {
-    console.log(`${(/* @__PURE__ */ new Date()).toISOString()} selection:
-from ${selection.anchorOffset} in`, selection.anchorNode, `
-to ${selection.focusOffset} in`, selection.focusNode, `
-active:`, state.shadowRoot.activeElement, `
-`, event);
-    if (state.shadowRoot.activeElement === state.program) {
-      selection.setPosition(state.program, 0);
-    }
-  }, {
-    signal
-  });
-};
 
 // timer.mjs
 var MILLISECONDS_PER_MINUTE = 1e3 * 60;
@@ -3062,26 +3143,28 @@ var updateResultsView = (state) => {
     });
   }
 };
+var LINE_NUMBERS_CLICKABLE_TITLE = "Jump to source";
 var updateLineNumberResultIndicator = (state, row, title, icon) => {
-  const lineNumberElementsWithResults = state.lineNumberElementsWithResults, lineNumberElement = (
-    /** @type {HTMLElement} */
-    state.lineNumbers.children[row]
-  );
-  lineNumberElement.title += title;
-  lineNumberElement.firstElementChild?.remove();
-  lineNumberElement.append(icon.cloneNode(true));
-  if (lineNumberElementsWithResults.at(-1) !== lineNumberElement) {
-    lineNumberElementsWithResults.push(lineNumberElement);
-    state.lineNumberToResultRow.set(row, countNewLines(state.resultsText));
+  setAttributeIfChanged(state.results.firstChild, "title", LINE_NUMBERS_CLICKABLE_TITLE);
+  setPropertyIfChanged(state.results.firstChild.style, "cursor", "pointer");
+  const lineNumberElementsWithResults = state.lineNumberElementsWithResults, programLineNumber = state.lineNumbers.childNodes[row];
+  programLineNumber.title += title;
+  programLineNumber.firstElementChild?.remove();
+  programLineNumber.append(icon.cloneNode(true));
+  if (lineNumberElementsWithResults.at(-1) !== programLineNumber) {
+    lineNumberElementsWithResults.push(programLineNumber);
+    state.programRowToResultRow.set(row, countNewLines(state.resultsText));
   }
 };
 var clearLineNumberResultIndicators = (state) => {
+  state.results.firstChild.title = "Program changed since this result was displayed";
+  state.results.firstChild.style.cursor = "default";
   for (const line of state.lineNumberElementsWithResults) {
     line.removeAttribute("title");
     line.firstElementChild?.remove();
   }
   state.lineNumberElementsWithResults.length = 0;
-  state.lineNumberToResultRow.clear();
+  state.programRowToResultRow.clear();
 };
 var countNewLines = (text) => {
   let lastNewLineIndexPlus1 = 0, row = 0;
@@ -3095,52 +3178,21 @@ var countNewLines = (text) => {
   } while (true);
   return row;
 };
-var handleResultsPointerDown = function(event) {
-  if (!specialKeyPressed(event)) {
+var handleResultLineNumbersPointerDown = function(event) {
+  if (this.results.firstChild.title !== LINE_NUMBERS_CLICKABLE_TITLE) {
     return;
   }
-  const scrollTop = this.results.scrollTop, clickedRow = Math.floor((event.clientY - this.results.getBoundingClientRect().top + scrollTop) / this.lineHeight);
-  let targetResultRow, targetLineNumber = 0;
-  for (const [lineNumber, resultRow] of this.lineNumberToResultRow) {
+  const resultsTop = this.results.getBoundingClientRect().top, clickedRow = Math.floor((event.clientY - resultsTop + this.results.scrollTop) / this.lineHeight);
+  let resultLineNumber, programLineNumber = 0;
+  for (const [programRow, resultRow] of this.programRowToResultRow) {
     if (resultRow > clickedRow) {
       break;
     }
-    targetLineNumber = lineNumber;
-    targetResultRow = resultRow;
+    programLineNumber = programRow;
+    resultLineNumber = resultRow;
   }
-  let top = 0;
-  if (targetResultRow) {
-    top = targetLineNumber * this.lineHeight - (resultsDividerIsVertical(this) ? (targetResultRow - Math.round(scrollTop / this.lineHeight) + 1) * this.lineHeight : 0);
-  }
-  this.contents.scrollTo({
-    top,
-    behavior: this.resultsScrollBehavior
-  });
-};
-var CURSOR_POINTER = "cursor-pointer";
-var handleResultsPointerEnter = function(event) {
-  updateCursorPointer.call(this, event);
-  const abortController = new AbortController(), update = updateCursorPointer.bind(this), cleanup = cleanupCursorPointerState.bind(this, abortController), options = {
-    signal: abortController.signal,
-    capture: false
-  };
-  addEventListener("keydown", update, options);
-  addEventListener("keyup", update, options);
-  this.results.addEventListener("pointercancel", cleanup, options);
-  this.results.addEventListener("pointerleave", cleanup, options);
-};
-var updateCursorPointer = function(event) {
-  if (specialKeyPressed(event)) {
-    this.results.classList.add(CURSOR_POINTER);
-    this.results.title = "Jump to source";
-  } else {
-    this.results.classList.remove(CURSOR_POINTER);
-    this.results.removeAttribute("title");
-  }
-};
-var cleanupCursorPointerState = function(abortController) {
-  this.results.classList.remove(CURSOR_POINTER);
-  abortController.abort();
+  scrollToLine(this, this.contents, resultLineNumber !== void 0 && this.lineNumbers, programLineNumber, resultLineNumber !== void 0 && resultsDividerIsVertical(this) ? resultsTop - /** @type {HTMLElement} */
+  this.results.firstChild.childNodes[resultLineNumber + 1].getBoundingClientRect().top : 0);
 };
 
 // urls.mjs
@@ -3178,6 +3230,9 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
     @media (any-pointer: fine) {
         --grid-resizer-width: 10px;
     }
+
+    /* The background color of a line when it's emphasized (e.g. when the user clicks on a result and the editor scrolls to the source code line, the source code line will briefly flash with this background color) */
+    --line-emphasis-background: green;
 }
 
 :host(.resizable:not(:is(:fullscreen, :-webkit-fullscreen))) {
@@ -3198,7 +3253,6 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
     grid-template-columns: max-content var(--program-fr) var(--grid-resizer-width) 1fr;
 
     & .grid-resizer {
-        width: --grid-resizer-width;
         height: 100%;
         border-inline: var(--border-width) solid var(--border-color);
         cursor: ew-resize;
@@ -3211,7 +3265,6 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
 
     & .grid-resizer {
         grid-row: 2;
-        height: --grid-resizer-width;
         width: 100%;
         border-inline: none;
         border-block: var(--border-width) solid var(--border-color);
@@ -3224,14 +3277,6 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
     white-space: pre;
     position: relative;
     overflow-y: auto;
-
-    & > .line-numbers {
-        cursor: default;
-    }
-
-    &.cursor-pointer * {
-        cursor: pointer;
-    }
 }
 
 :host(.results-shown.horizontal-results-divider) > .results {
@@ -3242,9 +3287,12 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
     background-color: color-mix(in srgb, currentColor 20%, transparent);
 }
 
-.toolbar {
+.toolbar, .line-numbers {
     user-select: none;
     -webkit-user-select: none;
+}
+
+.toolbar {
     box-sizing: border-box;
     position: sticky;
     top: 0;
@@ -3356,10 +3404,6 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
     --program-width: 0px;
     --program-height: 0px;
 
-    & > .line-numbers {
-        cursor: pointer;
-    }
-
     &:not(:focus-within) > .line-numbers {
         opacity: 0.5;
     }
@@ -3368,9 +3412,9 @@ var STYLESHEET_URL = URL.createObjectURL(new Blob([`:host {
 .program-container, .outlines {
     position: absolute;
     top: 0;
+    left: var(--line-count-margin);
     width: var(--program-width);
     height: var(--program-height);
-    margin-inline-start: calc(var(--line-count-margin));
 }
 .program-container {
     /* Ensures the program takes up all the available space so that click events go to it instead of accidentally going to the line number (e.g. if the user clicks to the right of the longest line, it should put the cursor at the end of that line, not select the whole line as if they had clicked that line's number) */
@@ -3432,6 +3476,7 @@ button:active, button.action-performed {
     left: 0;
     white-space: pre;
     height: var(--program-height);
+    cursor: pointer;
 
     &>* {
         outline: 0.25px solid color-mix(in srgb, currentColor 10%, transparent);
@@ -3459,6 +3504,9 @@ button:active, button.action-performed {
     }
 }
 
+.flash-line-background {
+    background-color: var(--line-emphasis-background);
+}
 
 .outlines * {
     /* Adding the --outline-stroke variable as an indirection (rather than setting \`style.stroke\` directly) allows classes like "function_call" to override the \`stroke\` (e.g. to \`none\`) */
@@ -3562,51 +3610,7 @@ rect.in_expression, rect.function_call {
     animation: spin 2s linear infinite;
 }
 `], {type: "text/css"}));
-var WORKER_RUNNER_URL = URL.createObjectURL(new Blob([`// ../errors.mjs
-var DustError = class extends Error {
-  name = "DustError";
-  /** @readonly @type {{node: DustNode | null, fn: DustFunction | null}[]} */
-  dustStack;
-  /**
-   * @param {string} message
-   * @param {{node: DustNode | null}} debug 
-   * @param {ErrorOptions} [options]
-   */
-  constructor(message, { node }, options) {
-    super(message, options);
-    this.dustStack = [
-      {
-        node,
-        fn: null
-      }
-    ];
-  }
-};
-var InterpretError = class extends DustError {
-  name = "InterpretError";
-  /** @readonly @type {DustScope | null} */
-  scope;
-  /**
-   * @param {string} message
-   * @param {{node: DustNode | null, scope: DustScope | null}} debug 
-   * @param {ErrorOptions} [options]
-   */
-  constructor(message, debug, options) {
-    super(message, debug, options);
-    this.scope = debug.scope;
-  }
-  /**
-   * @param {string} message
-   * @param {{node: DustNode | null, scope: DustScope | null}} debug 
-   * @param {ErrorOptions} [options]
-   * @returns {never}
-   */
-  static throw(message, debug, options) {
-    throw new this(message, debug, options);
-  }
-};
-
-// ../../errors-as-values/error-codes.mjs
+var WORKER_RUNNER_URL = URL.createObjectURL(new Blob([`// ../../errors-as-values/error-codes.mjs
 var PARSE_NUMBER_ERROR__INVALID_STRING = 0;
 var PARSE_NUMBER_ERROR__OUT_OF_BOUNDS = 1;
 var JSON_ERROR__CANNOT_STRINGIFY = 12;
@@ -3643,7 +3647,7 @@ var OUT_OF_BOUNDS_ERROR = err(PARSE_NUMBER_ERROR__OUT_OF_BOUNDS);
 var CANNOT_STRINGIFY_ERROR = err(JSON_ERROR__CANNOT_STRINGIFY);
 
 // ../interpreter/errors.mjs
-var InterpretError2 = class extends Error {
+var InterpretError = class extends Error {
   name = "InterpretError";
   /** @readonly @type {{node: DustNode | null, fn: DustFunction | null}[]} */
   dustStack;
@@ -3739,6 +3743,50 @@ var whileLoopLabel = (node) => identifierDeclarationName(node.children[3]);
 // ../parser/accessors/type-checks.mjs
 var isLeaf = (node) => !Array.isArray(node.text);
 
+// ../errors.mjs
+var DustError = class extends Error {
+  name = "DustError";
+  /** @readonly @type {{node: DustNode | null, fn: DustFunction | null}[]} */
+  dustStack;
+  /**
+   * @param {string} message
+   * @param {{node: DustNode | null}} debug 
+   * @param {ErrorOptions} [options]
+   */
+  constructor(message, { node }, options) {
+    super(message, options);
+    this.dustStack = [
+      {
+        node,
+        fn: null
+      }
+    ];
+  }
+};
+var InterpretError2 = class extends DustError {
+  name = "InterpretError";
+  /** @readonly @type {DustScope | null} */
+  scope;
+  /**
+   * @param {string} message
+   * @param {{node: DustNode | null, scope: DustScope | null}} debug 
+   * @param {ErrorOptions} [options]
+   */
+  constructor(message, debug, options) {
+    super(message, debug, options);
+    this.scope = debug.scope;
+  }
+  /**
+   * @param {string} message
+   * @param {{node: DustNode | null, scope: DustScope | null}} debug 
+   * @param {ErrorOptions} [options]
+   * @returns {never}
+   */
+  static throw(message, debug, options) {
+    throw new this(message, debug, options);
+  }
+};
+
 // ../interpreter/builtins.mjs
 var rootScope = /* @__PURE__ */ Object.create(null);
 rootScope.true = true;
@@ -3746,14 +3794,14 @@ rootScope.false = false;
 var squareRootName = "square-root";
 rootScope[squareRootName] = (number) => {
   if (typeof number !== "number") {
-    throw new InterpretError(\`Invalid parameter for \${squareRootName}: expected one number, but got \${dustValueType(number)}}\`, {
+    throw new InterpretError2(\`Invalid parameter for \${squareRootName}: expected one number, but got \${dustValueType(number)}}\`, {
       node: null,
       scope: rootScope
     });
   }
   const result = Math.sqrt(number);
   if (Number.isNaN(result)) {
-    throw new InterpretError(\`Invalid parameter for \${squareRootName}: the square root of \${number} is NaN\`, {
+    throw new InterpretError2(\`Invalid parameter for \${squareRootName}: the square root of \${number} is NaN\`, {
       node: null,
       scope: rootScope
     });
@@ -3779,7 +3827,7 @@ Object.freeze(rootScope);
 var dustOperators = {
   "+": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "+"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "+"));
     }
     return a + b;
   },
@@ -3805,37 +3853,37 @@ var dustOperators = {
   // (- n) // OK: equivalent to \`-n\`: \`-\` works as both a unary and binary operator
   "-": (a, b) => {
     if (typeof a !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "-"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "-"));
     }
     if (b === void 0) {
       return -1 * a;
     }
     if (typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "-"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "-"));
     }
     return a - b;
   },
   "*": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "*"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "*"));
     }
     return a * b;
   },
   "/": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "/"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "/"));
     }
     return a / b;
   },
   "%": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "%"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "%"));
     }
     return a % b;
   },
   "^": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "^"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "^"));
     }
     return Math.pow(a, b);
   },
@@ -3851,25 +3899,25 @@ var dustOperators = {
   ),
   "<": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "<"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "<"));
     }
     return a < b;
   },
   "\\u2264": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "\\u2264"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "\\u2264"));
     }
     return a <= b;
   },
   ">": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, ">"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, ">"));
     }
     return a > b;
   },
   "\\u2265": (a, b) => {
     if (typeof a !== "number" || typeof b !== "number") {
-      throw new InterpretError(...numberOperatorErrorParams(a, b, "\\u2265"));
+      throw new InterpretError2(...numberOperatorErrorParams(a, b, "\\u2265"));
     }
     return a >= b;
   },
@@ -3880,7 +3928,7 @@ var dustOperators = {
     if (Array.isArray(a) && Array.isArray(b)) {
       return a.concat(b);
     }
-    throw new InterpretError(\`Invalid parameters for "++": expected two strings or two arrays, but got \${dustValueType(a)} and \${dustValueType(b)}\`, {
+    throw new InterpretError2(\`Invalid parameters for "++": expected two strings or two arrays, but got \${dustValueType(a)} and \${dustValueType(b)}\`, {
       node: null,
       scope: rootScope
     });
@@ -3932,14 +3980,14 @@ var number_TYPE = {
         if (at) {
           return at.call(collection, self2);
         }
-        throw new InterpretError(\`"\${dustValueType(collection)}" does not support integer indexing\`, {
+        throw new InterpretError2(\`"\${dustValueType(collection)}" does not support integer indexing\`, {
           node: null,
           scope: null
         });
       }
       const value = collection.at(self2);
       if (value === void 0) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(self2, collection));
+        throw new InterpretError2(...indexOutOfBoundsErrorArgs(self2, collection));
       }
       return value;
     }
@@ -3969,7 +4017,7 @@ var string_TYPE = {
     length: (self2) => self2.length,
     at: (self2, index) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const value = self2.at(index);
       if (value === void 0) {
@@ -3979,11 +4027,11 @@ var string_TYPE = {
     },
     require: (self2, index) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const value = self2.at(index);
       if (value === void 0) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self2));
+        throw new InterpretError2(...indexOutOfBoundsErrorArgs(index, self2));
       }
       return value;
     },
@@ -3998,7 +4046,7 @@ var array_TYPE = {
     length: (self2) => self2.length,
     at: (self2, index) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const value = self2.at(index);
       if (value === void 0) {
@@ -4008,31 +4056,31 @@ var array_TYPE = {
     },
     require: (self2, index) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const value = self2.at(index);
       if (value === void 0) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self2));
+        throw new InterpretError2(...indexOutOfBoundsErrorArgs(index, self2));
       }
       return value;
     },
     with: (self2, index, element) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const length = self2.length;
       if (index < -length || length <= index) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self2));
+        throw new InterpretError2(...indexOutOfBoundsErrorArgs(index, self2));
       }
       return self2.with(index, element);
     },
     ["set!"]: (self2, index, element) => {
       if (typeof index !== "number") {
-        throw new InterpretError(...indexTypeErrorArgs(index));
+        throw new InterpretError2(...indexTypeErrorArgs(index));
       }
       const length = self2.length;
       if (index < -length || length <= index) {
-        throw new InterpretError(...indexOutOfBoundsErrorArgs(index, self2));
+        throw new InterpretError2(...indexOutOfBoundsErrorArgs(index, self2));
       }
       if (index < 0) {
         self2[index + length] = element;
@@ -4060,7 +4108,7 @@ var array_TYPE = {
     },
     ["append-all"]: (self2, elements) => {
       if (!Array.isArray(elements)) {
-        throw new InterpretError(\`"append-all" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
+        throw new InterpretError2(\`"append-all" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
           node: null,
           scope: null
         });
@@ -4072,7 +4120,7 @@ var array_TYPE = {
     },
     ["prepend-all"]: (self2, elements) => {
       if (!Array.isArray(elements)) {
-        throw new InterpretError(\`"prepend-all" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
+        throw new InterpretError2(\`"prepend-all" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
           node: null,
           scope: null
         });
@@ -4084,7 +4132,7 @@ var array_TYPE = {
     },
     ["append-all!"]: (self2, elements) => {
       if (!Array.isArray(elements)) {
-        throw new InterpretError(\`"append-all!" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
+        throw new InterpretError2(\`"append-all!" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
           node: null,
           scope: null
         });
@@ -4094,7 +4142,7 @@ var array_TYPE = {
     },
     ["prepend-all!"]: (self2, elements) => {
       if (!Array.isArray(elements)) {
-        throw new InterpretError(\`"prepend-all!" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
+        throw new InterpretError2(\`"prepend-all!" requires both parameters to be arrays, but got "\${dustValueType(self2)}" and "\${dustValueType(elements)}"\`, {
           node: null,
           scope: null
         });
@@ -4127,7 +4175,7 @@ var indexOutOfBoundsErrorArgs = (index, collection) => [
 var RECORD_TYPE_KEY = Symbol("type");
 var recordWith = (self2, otherRecord) => {
   if (!isRecord(otherRecord)) {
-    throw new InterpretError(\`"with" requires both parameters to be records, but got "\${dustValueType(otherRecord)}"\`, {
+    throw new InterpretError2(\`"with" requires both parameters to be records, but got "\${dustValueType(otherRecord)}"\`, {
       node: null,
       scope: null
     }, {
@@ -4146,7 +4194,7 @@ var recordWith = (self2, otherRecord) => {
 recordWith.dustFunctionName = "with";
 var recordSet = (self2, otherRecord) => {
   if (!isRecord(otherRecord)) {
-    throw new InterpretError(\`"set!" requires both parameters to be records, but got "\${dustValueType(otherRecord)}"\`, {
+    throw new InterpretError2(\`"set!" requires both parameters to be records, but got "\${dustValueType(otherRecord)}"\`, {
       node: null,
       scope: null
     }, {
@@ -4159,7 +4207,7 @@ var recordSet = (self2, otherRecord) => {
   for (const [fieldName, value] of Object.entries(otherRecord)) {
     const descriptor = Object.getOwnPropertyDescriptor(self2, fieldName);
     if (!descriptor) {
-      throw new InterpretError(\`target record does not have a field "\${fieldName}"\`, {
+      throw new InterpretError2(\`target record does not have a field "\${fieldName}"\`, {
         node: null,
         scope: null
       }, {
@@ -4170,7 +4218,7 @@ var recordSet = (self2, otherRecord) => {
       });
     }
     if (!descriptor.writable) {
-      throw new InterpretError(\`Cannot set field "\${fieldName}" because it is a constant\`, {
+      throw new InterpretError2(\`Cannot set field "\${fieldName}" because it is a constant\`, {
         node: null,
         scope: null
       }, {
@@ -4269,7 +4317,7 @@ var getType = (value) => {
         t
       );
     default:
-      throw new InterpretError(\`Unrecognized dust value type "\${typeof value}"\`, {
+      throw new InterpretError2(\`Unrecognized dust value type "\${typeof value}"\`, {
         node: null,
         scope: null
       });
@@ -4281,7 +4329,7 @@ var makeAssociatedFunction = (fieldName, fieldType) => {
       return (self2, ...args) => {
         const fn = self2[fieldName];
         if (typeof fn !== "function") {
-          throw new InterpretError(\`Expected record.\${fieldName} to be a function, but got "\${dustValueType(fn)}"\`, {
+          throw new InterpretError2(\`Expected record.\${fieldName} to be a function, but got "\${dustValueType(fn)}"\`, {
             node: null,
             scope: null
           }, {
@@ -4296,7 +4344,7 @@ var makeAssociatedFunction = (fieldName, fieldType) => {
       return (self2, ...args) => {
         const fn = self2[fieldName];
         if (typeof fn !== "function") {
-          throw new InterpretError(\`Expected record.\${fieldName} to be a function, but got "\${dustValueType(fn)}"\`, {
+          throw new InterpretError2(\`Expected record.\${fieldName} to be a function, but got "\${dustValueType(fn)}"\`, {
             node: null,
             scope: null
           }, {
@@ -4311,7 +4359,7 @@ var makeAssociatedFunction = (fieldName, fieldType) => {
       return (self2) => {
         const value = self2[fieldName];
         if (value === void 0 || typeof value === "function") {
-          throw new InterpretError(\`Expected record.\${fieldName} to be a value that's not a function nor undefined, but got "\${dustValueType(value)}"\`, {
+          throw new InterpretError2(\`Expected record.\${fieldName} to be a value that's not a function nor undefined, but got "\${dustValueType(value)}"\`, {
             node: null,
             scope: null
           }, {
@@ -4348,7 +4396,7 @@ var controlFlowContainer = (controlFlow) => controlFlow.kind === CONTINUE ? "loo
 var controlFlowDescriptor = ({ kind, label }) => {
   const { description } = kind;
   if (!description) {
-    throw new InterpretError(\`Bug in interpreter: control flow symbol.description is undefined\`, {
+    throw new InterpretError2(\`Bug in interpreter: control flow symbol.description is undefined\`, {
       node: null,
       scope: null
     }, {
@@ -4579,7 +4627,7 @@ var interpretProgram = function* (program, fileName, shouldStop) {
       }
       const start = performance.now(), result = interpret(children[i], scope, null, shouldStop), perf = performance.now() - start, { row, column } = findPosition(children[i], program);
       if (isControlFlow(result)) {
-        throw new InterpretError2(\`\${controlFlowContainer(result)} not found for "\${controlFlowDescriptor(result)}"\`, {
+        throw new InterpretError(\`\${controlFlowContainer(result)} not found for "\${controlFlowDescriptor(result)}"\`, {
           node: result.node,
           scope
         });
@@ -4597,7 +4645,7 @@ var interpretProgram = function* (program, fileName, shouldStop) {
       return "stopped";
     }
     const { row, column } = findPosition(children[i], program);
-    if (!(error instanceof InterpretError2)) {
+    if (!(error instanceof InterpretError)) {
       console.error(\`unknown error\`, error);
       return {
         row,
@@ -4638,12 +4686,12 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
     case "unparseable_group":
     case "character":
     case "text":
-      throw new InterpretError2(\`Bug: unexpected "\${node.type}" node\`, {
+      throw new InterpretError(\`Bug: unexpected "\${node.type}" node\`, {
         node,
         scope
       });
     case "program":
-      throw new InterpretError2(\`Bug: unexpected "program" node that is not a root\`, {
+      throw new InterpretError(\`Bug: unexpected "program" node that is not a root\`, {
         node,
         scope
       });
@@ -4652,7 +4700,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
         // TODO: we actually want a more specific integer type based on the provided precision
         parseIntSafe(node.text),
         (error) => {
-          throw new InterpretError2(\`"\${node.text}" is not a valid JS integer\`, {
+          throw new InterpretError(\`"\${node.text}" is not a valid JS integer\`, {
             node,
             scope
           }, {
@@ -4665,7 +4713,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
         // TODO: we actually want a more specific fixed-point type based on the provided precision
         parseFloatSafe(node.text),
         (error) => {
-          throw new InterpretError2(\`"\${node.text}" is not a valid JS float\`, {
+          throw new InterpretError(\`"\${node.text}" is not a valid JS float\`, {
             node,
             scope
           }, {
@@ -4676,7 +4724,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
     case "identifier": {
       const value = scope[node.text];
       if (value === void 0) {
-        throw new InterpretError2(\`"\${node.text}" not found in scope\`, {
+        throw new InterpretError(\`"\${node.text}" not found in scope\`, {
           node,
           scope
         });
@@ -4684,7 +4732,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
       return value;
     }
     case "unit":
-      throw new InterpretError2(\`TODO: implement "\${node.type}"\`, {
+      throw new InterpretError(\`TODO: implement "\${node.type}"\`, {
         node,
         scope
       });
@@ -4695,14 +4743,14 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
     case "set_declaration":
     case "write_declaration":
     case "typed_declaration":
-      throw new InterpretError2(\`Bug: unexpected "\${node.type}" node\`, {
+      throw new InterpretError(\`Bug: unexpected "\${node.type}" node\`, {
         node,
         scope
       });
     case "definition":
       return interpretDefinitionOrAssignment(node, scope, scope, shouldStop);
     case "function_called":
-      throw new InterpretError2(\`Bug: unexpected "\${node.type}" node\`, {
+      throw new InterpretError(\`Bug: unexpected "\${node.type}" node\`, {
         node,
         scope
       });
@@ -4716,7 +4764,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
           return condition;
         }
         if (typeof condition !== "boolean") {
-          throw new InterpretError2(\`Expression between "if" and "then" must be of type "boolean", but got "\${dustValueType(condition)}"\`, {
+          throw new InterpretError(\`Expression between "if" and "then" must be of type "boolean", but got "\${dustValueType(condition)}"\`, {
             node: getCondition(node, index),
             scope
           });
@@ -4732,7 +4780,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
       return null;
     }
     case "match_expression":
-      throw new InterpretError2(\`TODO: implement "\${node.type}"\`, {
+      throw new InterpretError(\`TODO: implement "\${node.type}"\`, {
         node,
         scope
       });
@@ -4746,7 +4794,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
       }
       return interpret(getInExpressionResult(node), scope, null, shouldStop);
     case "definition_group":
-      throw new InterpretError2(\`Bug: unexpected "\${node.type}" node\`, {
+      throw new InterpretError(\`Bug: unexpected "\${node.type}" node\`, {
         node,
         scope
       });
@@ -4768,7 +4816,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
       return interpretDoWhileLoop(node, scope, blockOrLoopLabel(node), 2, shouldStop);
     case "for_loop":
     case "for_loop_with_label":
-      throw new InterpretError2(\`TODO: implement "\${node.type}"\`, {
+      throw new InterpretError(\`TODO: implement "\${node.type}"\`, {
         node,
         scope
       });
@@ -4803,7 +4851,7 @@ var interpret = (node, scope, definitionName2, shouldStop) => {
     case "array":
       return interpretArray(node, scope, shouldStop);
     case "character_literal":
-      throw new InterpretError2(\`TODO: implement "\${node.type}"\`, {
+      throw new InterpretError(\`TODO: implement "\${node.type}"\`, {
         node,
         scope
       });
@@ -4826,7 +4874,7 @@ var interpretDoExpression = (node, scope, blockLabel, bodyStart, shouldStop) => 
       return result;
     }
     if (kind === CONTINUE) {
-      throw new InterpretError2(\`Cannot "continue" from a block (tried to "continue" from "\${blockLabel}")\`, {
+      throw new InterpretError(\`Cannot "continue" from a block (tried to "continue" from "\${blockLabel}")\`, {
         node: result.node,
         scope
       });
@@ -4870,7 +4918,7 @@ var interpretWhileLoop = (node, scope, blockLabel, bodyStart, shouldStop) => {
       return condition;
     }
     if (typeof condition !== "boolean") {
-      throw new InterpretError2(\`Expression between "while" and "do" must be of type "boolean", got "\${dustValueType(condition)}"\`, {
+      throw new InterpretError(\`Expression between "while" and "do" must be of type "boolean", got "\${dustValueType(condition)}"\`, {
         node: conditionNode,
         scope
       });
@@ -4920,7 +4968,7 @@ var interpretDoWhileLoop = (node, scope, blockLabel, bodyStart, shouldStop) => {
       return condition;
     }
     if (typeof condition !== "boolean") {
-      throw new InterpretError2(\`Expression after "while" must be of type "boolean", got "\${dustValueType(condition)}"\`, {
+      throw new InterpretError(\`Expression after "while" must be of type "boolean", got "\${dustValueType(condition)}"\`, {
         node: conditionNode,
         scope
       });
@@ -4940,12 +4988,12 @@ var interpretFunctionCall = (node, scope, shouldStop) => {
     const child = children[index];
     switch (child.type) {
       case "definition":
-        throw new InterpretError2(\`named parameters are not yet supported\`, {
+        throw new InterpretError(\`named parameters are not yet supported\`, {
           node: child,
           scope
         });
       case "operator":
-        fn = dustOperators[child.text] ?? InterpretError2.throw(\`operator "\${child.text}" not yet implemented\`, {
+        fn = dustOperators[child.text] ?? InterpretError.throw(\`operator "\${child.text}" not yet implemented\`, {
           node: child,
           scope
         });
@@ -4976,7 +5024,7 @@ var interpretFunctionCall = (node, scope, shouldStop) => {
           parameters.unshift(fnValue);
           break;
         }
-        throw new InterpretError2(\`Expected a function, got \${dustValueType(fnValue)}\`, {
+        throw new InterpretError(\`Expected a function, got \${dustValueType(fnValue)}\`, {
           node: child,
           scope
         }, {
@@ -4995,7 +5043,7 @@ var interpretFunctionCall = (node, scope, shouldStop) => {
     }
   }
   if (!fn) {
-    throw new InterpretError2(\`Bug: expected exactly one function, but only got parameters\`, {
+    throw new InterpretError(\`Bug: expected exactly one function, but only got parameters\`, {
       node,
       scope
     }, {
@@ -5021,11 +5069,11 @@ var interpretFunctionCall = (node, scope, shouldStop) => {
     if (error === STOP) {
       throw error;
     }
-    if (error instanceof InterpretError2) {
+    if (error instanceof InterpretError) {
       error.addFnToStack(fn, node);
       throw error;
     }
-    throw new InterpretError2(\`Bug in interpreter\`, {
+    throw new InterpretError(\`Bug in interpreter\`, {
       node,
       scope
     }, {
@@ -5066,7 +5114,7 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
     }
     case "set_declaration": {
       if (scope !== destination) {
-        throw new InterpretError2(\`"set" expressions are not allowed in records\`, {
+        throw new InterpretError(\`"set" expressions are not allowed in records\`, {
           node,
           scope
         }, {
@@ -5097,7 +5145,7 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
           case "typed_declaration":
             const parameterPatternNode = definitionPattern(child);
             if (parameterPatternNode.type !== "identifier_declaration") {
-              throw new InterpretError2(\`"\${parameterPatternNode.type}" patterns are not (yet) supported\`, {
+              throw new InterpretError(\`"\${parameterPatternNode.type}" patterns are not (yet) supported\`, {
                 node: parameterPatternNode,
                 scope
               });
@@ -5107,13 +5155,13 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
             break;
           case "identifier":
             if (child.text !== "self") {
-              throw new InterpretError2(\`Identifiers other than the special keyword "self" are not (yet) supported as function parameters (found "\${child.text}": did you mean declare a parameter "$\${child.text}"?)\`, {
+              throw new InterpretError(\`Identifiers other than the special keyword "self" are not (yet) supported as function parameters (found "\${child.text}": did you mean declare a parameter "$\${child.text}"?)\`, {
                 node: child,
                 scope
               });
             }
             if (index !== 0) {
-              throw new InterpretError2(\`"self" parameter must come first, before the function name or any other parameters (found \${index} nodes before "self")\`, {
+              throw new InterpretError(\`"self" parameter must come first, before the function name or any other parameters (found \${index} nodes before "self")\`, {
                 node: child,
                 scope
               });
@@ -5123,19 +5171,19 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
             takesSelf = true;
             break;
           case "definition":
-            throw new InterpretError2(\`Default values for parameters are not yet supported\`, {
+            throw new InterpretError(\`Default values for parameters are not yet supported\`, {
               node: child,
               scope
             });
           case "operator":
-            throw new InterpretError2(\`Operator overloading is not yet supported\`, {
+            throw new InterpretError(\`Operator overloading is not yet supported\`, {
               node: child,
               scope
             });
           case "function_called": {
             const fnNode = child.children[1];
             if (fnNode.type !== "identifier_declaration") {
-              throw new InterpretError2(\`Expected a function identifier declaration, but found "\${fnNode.type}"\`, {
+              throw new InterpretError(\`Expected a function identifier declaration, but found "\${fnNode.type}"\`, {
                 node: fnNode,
                 scope
               });
@@ -5151,14 +5199,14 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
             }
           // Fall through to error case:
           default: {
-            throw new InterpretError2(\`Unexpected node type "\${child.type}"\${isLeaf(child) ? \`: \${child.text}\` : ""}\`, {
+            throw new InterpretError(\`Unexpected node type "\${child.type}"\${isLeaf(child) ? \`: \${child.text}\` : ""}\`, {
               node: child,
               scope
             });
           }
         }
         if (parameterNames.includes(parameterName)) {
-          throw new InterpretError2(\`Duplicate function parameter name "\${parameterName}"\`, {
+          throw new InterpretError(\`Duplicate function parameter name "\${parameterName}"\`, {
             node: child,
             scope
           });
@@ -5167,7 +5215,7 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
         parameterWritable.push(writable);
       }
       if (!fnName) {
-        throw new InterpretError2(\`Bug: expected exactly one function, but only got parameters\`, {
+        throw new InterpretError(\`Bug: expected exactly one function, but only got parameters\`, {
           node,
           scope
         }, {
@@ -5189,7 +5237,7 @@ var interpretDefinitionOrAssignment = (node, scope, destination, shouldStop) => 
       return dustFunction;
     }
     default:
-      throw new InterpretError2(\`"\${patternNode.type}" patterns are not (yet) supported\`, {
+      throw new InterpretError(\`"\${patternNode.type}" patterns are not (yet) supported\`, {
         node: patternNode,
         scope
       });
@@ -5208,7 +5256,7 @@ var makeDustFunction = (fnName, parameterNames, parameterWritable, takesSelf, no
       return partiallyAppliedFunction;
     }
     if (parameters.length > parameterNames.length) {
-      throw new InterpretError2(\`too many parameters for "\${fnName}": expected \${parameterNames.length} but got \${parameters.length}\`, {
+      throw new InterpretError(\`too many parameters for "\${fnName}": expected \${parameterNames.length} but got \${parameters.length}\`, {
         node,
         scope
       }, {
@@ -5229,7 +5277,7 @@ var makeDustFunction = (fnName, parameterNames, parameterWritable, takesSelf, no
     }
     const result = interpret(valueNode, fnScope, fnName, shouldStop);
     if (isControlFlow(result)) {
-      throw new InterpretError2(\`\${controlFlowContainer(result)} not found for "\${controlFlowDescriptor(result)}"\`, {
+      throw new InterpretError(\`\${controlFlowContainer(result)} not found for "\${controlFlowDescriptor(result)}"\`, {
         node: result.node,
         scope: fnScope
       });
@@ -5247,14 +5295,14 @@ var throwIfHasOwn = (category, node, scope, destination, name) => {
     return;
   }
   if (scope !== destination) {
-    throw new InterpretError2(\`A \${category} "\${name}" is already defined in this record\`, {
+    throw new InterpretError(\`A \${category} "\${name}" is already defined in this record\`, {
       node,
       scope
     }, {
       cause: destination
     });
   }
-  throw new InterpretError2(\`Shadowing not (yet) supported for \${category}s: "\${name}" is already defined in this scope\`, {
+  throw new InterpretError(\`Shadowing not (yet) supported for \${category}s: "\${name}" is already defined in this scope\`, {
     node,
     scope
   });
@@ -5269,14 +5317,14 @@ var setVariable = (node, scope, value) => {
       return value;
     }
     if (descriptor) {
-      throw new InterpretError2(\`Cannot set "\${identifier}" because it's a constant\`, {
+      throw new InterpretError(\`Cannot set "\${identifier}" because it's a constant\`, {
         node,
         scope
       });
     }
     scopeNode = Object.getPrototypeOf(scopeNode);
   } while (scopeNode);
-  throw new InterpretError2(\`"\${identifier}" not found in scope\`, {
+  throw new InterpretError(\`"\${identifier}" not found in scope\`, {
     node,
     scope
   });
@@ -5312,7 +5360,7 @@ var interpretString = (node, scope, startQuote, endQuote, shouldStop) => {
         result += interpretString(childNode, scope, "\\xAB", "\\xBB", shouldStop);
         break;
       default:
-        throw new InterpretError2(\`Bug in parser: unexpected "\${childNode.type}" in string\`, {
+        throw new InterpretError(\`Bug in parser: unexpected "\${childNode.type}" in string\`, {
           node,
           scope
         });
@@ -5325,7 +5373,7 @@ var interpretRecord = (node, scope, shouldStop) => {
   record[RECORD_TYPE_KEY] = null;
   for (const child of node.children) {
     if (child.type !== "definition") {
-      throw new InterpretError2(\`Record may only contain "definition" nodes, but got "\${child.type}"\`, {
+      throw new InterpretError(\`Record may only contain "definition" nodes, but got "\${child.type}"\`, {
         node: child,
         scope
       });
@@ -8924,7 +8972,7 @@ var updateContents = (state) => {
   }
   state.allUpdates.push(totalPerf);
   const allUpdates = state.allUpdates.toSorted((a, b) => a - b);
-  console.warn(`PERFORMANCE (update):
+  debug?.warn(`PERFORMANCE (update):
 total:               ${totalPerf.toFixed(2)}ms
 total fast updates:  ${state.fastUpdates}
 total slow updates:  ${state.slowUpdates}
@@ -9129,21 +9177,7 @@ var keyboardClickListener = function(listener, event) {
     listener.call(this, event);
   }
 };
-var markActionPerformed = (button) => {
-  const existingTimeoutID = markedButtonTimeoutIDs.get(button);
-  if (existingTimeoutID) {
-    clearTimeout(existingTimeoutID);
-  } else {
-    button.classList.add(ACTION_PERFORMED);
-  }
-  markedButtonTimeoutIDs.set(button, setTimeout(unmarkButton.bind(button), 16.67 * 6));
-};
-var unmarkButton = function() {
-  this.classList.remove(ACTION_PERFORMED);
-  markedButtonTimeoutIDs.delete(this);
-};
-var ACTION_PERFORMED = "action-performed";
-var markedButtonTimeoutIDs = /* @__PURE__ */ new Map();
+var markButtonActionPerformed = temporarilyAddClass.bind("action-performed", MILLISECONDS_PER_FRAME * 6);
 
 // clipboard.mjs
 var copy = function(event) {
@@ -9234,6 +9268,80 @@ var exitFullscreen = (
 );
 var fullScreenElement = (root) => root.fullscreenElement ?? root.webkitFullscreenElement;
 
+// grid-resizer.mjs
+var PROGRAM_FR = "--program-fr";
+var programFrLocalStorageKey = (state) => `${state.localStorageID} ${PROGRAM_FR}`;
+var setUpGridResizer = (state) => {
+  const stored = localStorage.getItem(programFrLocalStorageKey(state));
+  if (stored !== null) {
+    state.editor.style.setProperty(PROGRAM_FR, stored);
+  }
+  state.gridResizer.addEventListener("pointerdown", resizeStart.bind(state), {
+    capture: true
+  });
+};
+var resizeStart = function(event) {
+  if (event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  const initialCursor = this.editor.style.cursor;
+  let resizeFn;
+  if (resultsDividerIsVertical(this)) {
+    resizeFn = resizeLeftRight;
+    this.editor.style.cursor = "ew-resize";
+  } else {
+    resizeFn = resizeUpDown;
+    this.editor.style.cursor = "ns-resize";
+  }
+  const abortController = new AbortController(), resizeEndFn = resizeEnd.bind(this, event.pointerId, abortController, initialCursor), options = {
+    signal: abortController.signal
+  }, resizer = this.gridResizer;
+  resizer.style.backgroundColor = "var(--grid-resizing-background-color)";
+  resizer.setPointerCapture(event.pointerId);
+  resizer.addEventListener("pointermove", resizeFn.bind(this, event.pointerId), options);
+  resizer.addEventListener("pointerup", resizeEndFn, options);
+  resizer.addEventListener("pointercancel", resizeEndFn, options);
+};
+var resizeEnd = function(pointerId, abortController, initialCursor, event) {
+  if (event.pointerId !== pointerId) {
+    return;
+  }
+  debug?.log(`stopped resizing due to "${event.type}"`, event);
+  abortController.abort();
+  this.gridResizer.style.removeProperty("background-color");
+  if (initialCursor) {
+    this.editor.style.cursor = initialCursor;
+  } else {
+    this.editor.style.removeProperty("cursor");
+  }
+  localStorage.setItem(programFrLocalStorageKey(this), this.editor.style.getPropertyValue(PROGRAM_FR));
+};
+var resizeLeftRight = function(pointerId, event) {
+  if (event.pointerId !== pointerId) {
+    return;
+  }
+  setProgramFr(this, {
+    start: this.contents.getBoundingClientRect().left,
+    end: this.results.getBoundingClientRect().right,
+    pointer: event.clientX
+  });
+};
+var resizeUpDown = function(pointerId, event) {
+  if (event.pointerId !== pointerId) {
+    return;
+  }
+  setProgramFr(this, {
+    start: this.contents.getBoundingClientRect().top,
+    end: this.results.getBoundingClientRect().bottom,
+    pointer: event.clientY
+  });
+};
+var setProgramFr = (state, { start, end, pointer }) => {
+  const fraction = Math.max(0.1, Math.min((pointer - start) / (end - start), 0.9));
+  state.editor.style.setProperty(PROGRAM_FR, `${fraction / (1 - fraction)}fr`);
+};
+
 // undo-redo.mjs
 var undo = function(event) {
   if (this.historyIndex === 0) {
@@ -9250,7 +9358,7 @@ var undo = function(event) {
   this.historyIndex--;
   updateUndoRedoButtons(this.redoButton, this.historyIndex === 0 && this.undoButton);
   if (!event) {
-    markActionPerformed(this.undoButton);
+    markButtonActionPerformed(this.undoButton);
   }
   restoreText(this);
 };
@@ -9261,7 +9369,7 @@ var redo = function(event) {
   this.historyIndex++;
   updateUndoRedoButtons(this.undoButton, this.historyIndex + 1 >= this.history.length && this.redoButton);
   if (!event) {
-    markActionPerformed(this.redoButton);
+    markButtonActionPerformed(this.redoButton);
   }
   restoreText(this);
 };
@@ -9408,58 +9516,72 @@ var handleKeyDown = function(event) {
     }
     return;
   }
-  handleKeyDownOrInputEvent(this, event, key);
-};
-var handleBeforeInput = function(event) {
-  console.log(event);
-  if (event.data && event.inputType === "insertText") {
-    handleKeyDownOrInputEvent(this, event, event.data);
-  }
-};
-var handleKeyDownOrInputEvent = (state, event, key) => {
-  const { selectedRange, text } = state, atLeastOneCharacterSelected = selectedRange.start !== selectedRange.end;
   switch (key) {
     case "Backspace": {
-      event.preventDefault();
-      if (atLeastOneCharacterSelected) {
-        replaceSelectedRange(state, "");
-        break;
-      }
-      const end = selectedRange.end;
-      if (end === 0) {
-        return;
-      }
-      setTextAndCursorPosition(state, text.slice(0, end - 1) + text.slice(end), end - 1);
+      backspace(this, event);
       break;
     }
     case "Delete": {
       event.preventDefault();
-      if (atLeastOneCharacterSelected) {
-        replaceSelectedRange(state, "");
+      if (selectedRange.start !== selectedRange.end) {
+        replaceSelectedRange(this, "");
         break;
       }
       const end = selectedRange.end;
       if (end === text.length) {
-        return;
+        break;
       }
-      setEditorText(state, text.slice(0, end) + text.slice(end + 1), end);
+      setEditorText(this, text.slice(0, end) + text.slice(end + 1), end);
       break;
     }
     case "Enter":
       event.preventDefault();
-      replaceSelectedRange(state, "\n");
+      replaceSelectedRange(this, "\n");
       break;
     case "Unidentified":
       event.preventDefault();
       break;
     default:
       if (key.length !== 1) {
-        console.error(`forgot to handle special key "${key}"`, event, state);
-        return;
+        console.error(`forgot to handle special key "${key}"`, event, this);
+        break;
       }
       event.preventDefault();
-      replaceSelectedRange(state, key);
+      replaceSelectedRange(this, key);
   }
+};
+var handleBeforeInputOnMobile = function(event) {
+  switch (event.inputType) {
+    case "insertText":
+      event.preventDefault();
+      if (event.data === null) {
+        console.error(`"beforeinput" event of type "insertText" had data=null`, event, this.editor);
+        break;
+      }
+      replaceSelectedRange(this, event.data);
+      break;
+    case "deleteContentBackward": {
+      updateVirtualSelection(this);
+      backspace(this, event);
+      break;
+    }
+    default: {
+      console.warn(`TODO handleBeforeInput(${event.inputType})`, event);
+    }
+  }
+};
+var backspace = (state, event) => {
+  const { selectedRange, text } = state;
+  event.preventDefault();
+  if (selectedRange.start !== selectedRange.end) {
+    replaceSelectedRange(state, "");
+    return;
+  }
+  const end = selectedRange.end;
+  if (end === 0) {
+    return;
+  }
+  setTextAndCursorPosition(state, text.slice(0, end - 1) + text.slice(end), end - 1);
 };
 var updateSelectedRangeByOneCharacter = (state, amount, shiftKey) => {
   const range = state.selectedRange;
@@ -9496,11 +9618,7 @@ var handlePointerDown = (state, event) => {
   if (event.button !== 0) {
     return;
   }
-  event.preventDefault();
   const pointerId = event.pointerId, programRect = state.program.getBoundingClientRect(), cursorPosition = findCursorPosition(state, event, programRect), target = event.target;
-  state.program.focus({
-    preventScroll: true
-  });
   if (!(target instanceof Element)) {
     throw new Error(`pointer event target should always be an Element`, {
       cause: {
@@ -9510,21 +9628,37 @@ var handlePointerDown = (state, event) => {
     });
   }
   if (state.lineNumbers.contains(target)) {
-    selectWholeLine(state, cursorPosition);
-    const lineNumberElement = (
-      /** @type {HTMLElement} */
-      target.closest("div")
-    ), resultRow = state.lineNumberToResultRow.get(computeCursorRow(state, event, programRect));
-    if (resultRow !== void 0) {
-      showResults(state);
-      state.results.scrollTo({
-        top: resultRow * state.lineHeight - (resultsDividerIsVertical(state) ? lineNumberElement.getBoundingClientRect().top - state.contents.getBoundingClientRect().top : 0),
-        behavior: state.resultsScrollBehavior
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const resultRow = state.programRowToResultRow.get(computeCursorRow(state, event, programRect));
+    if (resultRow === void 0) {
+      state.program.focus({
+        preventScroll: true
       });
+      selectWholeLine(state, cursorPosition);
+      drawSelectedRange(state);
+      return;
     }
+    showResults(state);
+    scrollToLine(state, state.results, state.results.firstChild, resultRow + 1, resultsDividerIsVertical(state) ? state.contents.getBoundingClientRect().top - /** @type {HTMLElement} */
+    target.closest("div").getBoundingClientRect().top : 0);
+    if (isMobile) {
+      return;
+    }
+    state.program.focus({
+      preventScroll: true
+    });
+    selectWholeLine(state, cursorPosition);
     drawSelectedRange(state);
     return;
   }
+  if (isMobile) {
+    return;
+  }
+  state.program.focus({
+    preventScroll: true
+  });
+  event.preventDefault();
   if (state.pointerDownTime !== null && pointerId === state.lastClickPointerId && cursorPosition === state.lastClickPosition && event.timeStamp - state.pointerDownTime <= state.repeatedClickSpeedMilliseconds) {
     state.repeatedClicks = /** @type {1 | 2 | 3} */
     state.repeatedClicks % 3 + 1;
@@ -9545,29 +9679,29 @@ var handlePointerDown = (state, event) => {
       selectWholeLine(state, cursorPosition);
   }
   drawSelectedRange(state);
-  const program = state.program;
-  if (event.pointerType === "mouse") {
-    const dragController = new AbortController(), signal = dragController.signal, dragListenerOptions = {
-      signal
-    }, dragEndFn = dragEnd.bind(program, dragController, pointerId);
-    program.setPointerCapture(pointerId);
-    program.addEventListener("pointermove", handlePointerMove.bind(state), dragListenerOptions);
-    program.addEventListener("pointerup", dragEndFn, dragListenerOptions);
-    program.addEventListener("pointercancel", dragEndFn, dragListenerOptions);
-    return;
-  }
-  const initialPosition = {
-    x: event.clientX,
-    y: event.clientY
-  }, abortController = new AbortController(), cancelLongPressFn = cancelLongPress.bind(abortController, state, initialPosition), options = {
+  const program = state.program, abortController = new AbortController(), listenerOptions = {
     signal: abortController.signal
   };
-  cancelLongPress.call(null, state, initialPosition, event);
+  if (event.pointerType === "mouse") {
+    const dragEndFn = dragEnd.bind(program, abortController, pointerId);
+    program.setPointerCapture(pointerId);
+    program.addEventListener("pointermove", handlePointerMove.bind(state), listenerOptions);
+    program.addEventListener("pointerup", dragEndFn, listenerOptions);
+    program.addEventListener("pointercancel", dragEndFn, listenerOptions);
+    return;
+  }
+  const cancelLongPressFn = cancelLongPress.bind(abortController, state, {
+    x: event.clientX,
+    y: event.clientY
+  });
+  if (state.longPressTimoutID !== null) {
+    clearTimeout(state.longPressTimoutID);
+  }
   state.longPressTimoutID = setTimeout(handleLongPress.bind(target, state, cursorPosition), state.longPressDelayMilliseconds);
-  program.addEventListener("pointerup", cancelLongPressFn, options);
-  program.addEventListener("pointerleave", cancelLongPressFn, options);
-  program.addEventListener("pointercancel", cancelLongPressFn, options);
-  program.addEventListener("pointermove", cancelLongPressFn, options);
+  program.addEventListener("pointerup", cancelLongPressFn, listenerOptions);
+  program.addEventListener("pointerleave", cancelLongPressFn, listenerOptions);
+  program.addEventListener("pointercancel", cancelLongPressFn, listenerOptions);
+  program.addEventListener("pointermove", cancelLongPressFn, listenerOptions);
 };
 var handlePointerMove = function(event) {
   setSelectedRange(this, this.selectedRange.start, findCursorPosition(this, event, this.program.getBoundingClientRect()));
@@ -9589,7 +9723,7 @@ var cancelLongPress = function(state, initialPosition, event) {
     return;
   }
   debug?.log(`cancelling long press due to "${event.type}"`, initialPosition, event);
-  this?.abort();
+  this.abort();
   if (state.longPressTimoutID === null) {
     return;
   }
@@ -9667,7 +9801,7 @@ var lastIndexOfRegex = (string, regex, start) => {
 // run.mjs
 var runOrStop = (state, event) => {
   if (!event) {
-    markActionPerformed(state.runButton);
+    markButtonActionPerformed(state.runButton);
   }
   if (state.runningState) {
     stop(state, state.runningState, "Program was stopped", stoppedIcon);
@@ -9677,6 +9811,8 @@ var runOrStop = (state, event) => {
     type: __WORKER_TYPE__
   }), stopper = makeSharedArrayBuffer(), startTimeNotification = `${(/* @__PURE__ */ new Date()).toLocaleTimeString()}: program started`, timer = state.runStatus.lastChild;
   worker.onmessage = handleWorkerResponse.bind(state, state.text);
+  worker.onerror = handleWorkerErrorEvent.bind(state, "Editor got an error from the worker thread");
+  worker.onmessageerror = handleWorkerErrorEvent.bind(state, "Editor got a message-error from the worker thread");
   worker.postMessage(
     /** @satisfies {WorkerRunnerMessage} */
     {
@@ -9706,16 +9842,14 @@ var runOrStop = (state, event) => {
 `);
   return true;
 };
-var stop = (state, runningState, event, icon) => {
-  console.log(`${(/* @__PURE__ */ new Date()).toISOString()} stopping.........`);
-  const { worker, stopper, stopTimer } = runningState, notification = `${(/* @__PURE__ */ new Date()).toLocaleTimeString()}: ${event}`;
+var stop = (state, runningState, reason, icon) => {
+  const { worker, stopper, stopTimer } = runningState, notification = `${(/* @__PURE__ */ new Date()).toLocaleTimeString()}: ${reason}`;
   state.runningState = null;
   stopTimer();
   if (stopper) {
-    Atomics.exchange(stopper, 0, 1);
+    stopper[0] = 1;
   }
   worker.terminate();
-  console.log(`${(/* @__PURE__ */ new Date()).toISOString()} stopped.........`);
   state.runStatus.lastChild.title = "Last program run time";
   state.runStatus.firstChild.replaceWith(icon.cloneNode(true));
   state.runStatus.title = notification;
@@ -9768,11 +9902,20 @@ ${response.data.error}
       return response.type;
   }
 };
+var handleWorkerErrorEvent = function(message, event) {
+  if (message === "Editor got an error from the worker thread" && !navigator.onLine) {
+    message += ` (if you are offline, that might be why)`;
+  }
+  console.error(message, event);
+  if (this.runningState) {
+    stop(this, this.runningState, message, errorIcon);
+  }
+};
 var makeSharedArrayBuffer = () => {
   if (window.SharedArrayBuffer) {
     return new SharedArrayBuffer(1);
   }
-  console.warn(`SharedArrayBuffer is not defined, so some features (like stopping execution of a program mid-run) might not work. Make sure to set the following HTTP headers:
+  console.warn(`SharedArrayBuffer is not defined, so some features (like stopping execution of a program mid-run) might not work very well. Make sure to set the following HTTP headers:
 Cross-Origin-Embedder-Policy: require-corp
 Cross-Origin-Opener-Policy: same-origin`);
 };
@@ -9825,9 +9968,13 @@ var InternalState = class {
   fullScreenButton = html("button").on("click", toggleFullScreen.bind(this)).build();
   // contents
   /** @readonly */
-  lineNumbers = html("div").set({
-    className: "line-numbers"
-  }).build();
+  lineNumbers = (
+    // SAFETY: only `LineNumber` can ever be added as children of `lineNumbers`
+    /** @type {LineNumbers} */
+    html("div").set({
+      className: "line-numbers"
+    }).build()
+  );
   /** @readonly */
   program = html("span").set({
     className: "program-container",
@@ -9843,7 +9990,9 @@ var InternalState = class {
   contents = html("div").set({
     className: "contents",
     tabIndex: -1
-  }).append(this.lineNumbers, this.outlines, this.program).on("pointerdown", handlePointerDown.bind(null, this)).on("contextmenu", (event) => {
+  }).append(this.lineNumbers, this.outlines, this.program).on("pointerdown", handlePointerDown.bind(null, this), {
+    capture: true
+  }).on("contextmenu", (event) => {
     console.warn(`TODO handle contextmenu: show a custom menu, with a space where the user can right-click to bring up the built-in context menu`, event);
   }).on("copy", copy.bind(this)).on("cut", cut.bind(this)).on("paste", paste.bind(this)).build();
   /** @readonly */
@@ -9872,14 +10021,13 @@ var InternalState = class {
       className: "results",
       tabIndex: -1
     }).append(html("div").set({
-      className: "line-numbers"
-    }).build(), svg({
+      className: "line-numbers",
+      tabIndex: -1
+    }).on("pointerdown", handleResultLineNumbersPointerDown.bind(this)).build(), svg({
       class: "outlines"
     }), html("span").set({
       className: "program-container"
-    }).build()).on("pointerdown", handleResultsPointerDown.bind(this), {
-      capture: true
-    }).on("pointerenter", handleResultsPointerEnter.bind(this)).build()
+    }).build()).build()
   );
   // status bar
   /** @readonly */
@@ -9943,8 +10091,11 @@ var InternalState = class {
   };
   /** @readonly @type {HTMLElement[]} */
   lineNumberElementsWithResults = [];
-  /** @readonly @type {Map<number, number>} */
-  lineNumberToResultRow = /* @__PURE__ */ new Map();
+  /** 
+   * Tracks which program line number corresponds to which result line number.
+   * @readonly @type {Map<number, number>} 
+   */
+  programRowToResultRow = /* @__PURE__ */ new Map();
   /* End RESULTS STATE */
   /* SETTINGS */
   // TODO add a way to change these settings 
@@ -10015,8 +10166,11 @@ var InternalState = class {
     editor.addEventListener("keydown", handleKeyDown.bind(this), {
       capture: true
     });
-    editor.addEventListener("beforeinput", handleBeforeInput.bind(this));
+    if (isMobile) {
+      editor.addEventListener("beforeinput", handleBeforeInputOnMobile.bind(this));
+    }
     setUpGridResizer(this);
+    new ResizeObserver(updateResultsDividerOrientation.bind(this)).observe(editor);
   }
 };
 var DEBUG_STYLES = false;
@@ -10032,12 +10186,6 @@ console.warn(`TODO
   - alt+up/down arrow should move the current line up/down
   - Shift+click should select the range between the current cursor position and the new one
   - measure time between key event and result getting drawn on screen, and report warnings if it's slow.
-
-
-- mobile still has major issues:
-  - tap-and-drag scrolls the text, so it needs a different way to select a range of characters
-    - need to mimic built-in draggable bubbles at either end of the selection
-  - replace "title" attributes with custom tooltips triggered on :focus/tap/click
 
 - parser
   - add parse errors for invalid things before '=' or ':':
@@ -10080,9 +10228,9 @@ var DustFileEditor = class extends HTMLElement {
     if (this.classList.contains(RESULTS_SHOWN) && !resultsShown(this.#state)) {
       console.error(`Class name "${RESULTS_SHOWN}" is reserved for internal use`, this);
     }
-    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", this.update.bind(this), { signal });
-    specializeBasedOnDeviceType(this.#state, signal);
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", this.update.bind(this), { signal });
     setUpFullScreenButton(this.#state, signal);
+    setUpSelectionOnMobile(this.#state, signal);
     updateStyle(this.#state);
     updateContents(this.#state);
     if (toFocus === void 0) {
