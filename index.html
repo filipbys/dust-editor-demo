@@ -2287,7 +2287,7 @@ var FLASH_LINE_BACKGROUND = "flash-line-background";
 var FLASH_DURATION = MILLISECONDS_PER_FRAME * 6;
 var scrollToLine = (state, container, lineNumbers, row, adjustment) => {
   const top = row * state.lineHeight + adjustment, lineNumber = lineNumbers && lineNumbers.childNodes[row];
-  if (container.scrollTop === top) {
+  if (Math.round(container.scrollTop) === Math.round(top)) {
     if (!lineNumber) {
       return;
     }
