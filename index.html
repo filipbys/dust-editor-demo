@@ -403,7 +403,30 @@ var specialKeyName = (
   (navigator.userAgentData?.platform ?? navigator.platform).includes("Mac") ? "\u2318" : "Ctrl"
 );
 var specialKeyPressed = specialKeyName === "\u2318" ? (event) => event.metaKey : (event) => event.ctrlKey;
-var isMobile = !matchMedia("(pointer: fine)").matches;
+var detectDeviceType = (localStorageKey, editor) => {
+  const urlKey = "device-type", urlMode = new URLSearchParams(location.search).get(urlKey);
+  if (isValidDeviceType(urlMode)) {
+    return urlMode;
+  } else if (urlMode !== null) {
+    console.warn(deviceTypeErrorMessage("URL search param", urlKey, urlMode), editor);
+  }
+  const storedMode = localStorage.getItem(localStorageKey);
+  if (isValidDeviceType(storedMode)) {
+    return storedMode;
+  } else if (storedMode !== null) {
+    console.warn(deviceTypeErrorMessage("localStorage", localStorageKey, storedMode), editor);
+  }
+  if (matchMedia("(pointer: fine)").matches) {
+    return "desktop";
+  }
+  return "mobile";
+};
+var DEVICE_TYPES = [
+  "desktop",
+  "mobile"
+];
+var isValidDeviceType = (name) => !!name && DEVICE_TYPES.includes(name);
+var deviceTypeErrorMessage = (category, key, value) => `Ignoring ${category} "${key}" (${value}) because it's not one of [${DEVICE_TYPES.map((it) => `"${it}"`).join(", ")}]`;
 var updateNativeSelection = (state) => {
   const selection = document.getSelection(), { start, end } = state.selectedRange;
   let startNode, startOffset = 0;
@@ -508,7 +531,7 @@ var updateVirtualSelection = (state) => {
 
 // selected-range-view.mjs
 var drawSelectedRange = (state) => {
-  if (isMobile) {
+  if (state.isMobile) {
     const { selectedRange: { start, end }, text: text2 } = state;
     updateIndicator(state, start === end ? null : findPoint(text2, start), findPoint(text2, end));
     updateNativeSelection(state);
@@ -587,10 +610,10 @@ var findPoint = (text, index) => {
   };
 };
 var setUpSelectionOnMobile = (state, signal) => {
-  const selection = document.getSelection();
-  if (!isMobile) {
+  if (!state.isMobile) {
     return;
   }
+  const selection = document.getSelection();
   if (!selection) {
     console.error(`document.getSelection() returned null`);
     return;
@@ -9038,13 +9061,10 @@ var replaceSelectedRange = (state, replacement) => {
 
 // local-storage.mjs
 var setUpLocalStorage = (state, signal) => {
-  const keys = {
-    selectedRange: `${state.localStorageID} selected-range`,
-    scrollPosition: `${state.localStorageID} scroll-position`
-  }, savedRange = loadStoredObject(keys.selectedRange, state.selectedRange), savedScrollPosition = loadStoredObject(keys.scrollPosition, {
+  const savedRange = loadStoredObject(state.localStorageKeys.selectedRange, state.selectedRange), savedScrollPosition = loadStoredObject(state.localStorageKeys.scrollPosition, {
     top: 0,
     left: 0
-  }), saveLocalStorageStateFn = saveLocalStorageState.bind(state, keys);
+  }), saveLocalStorageStateFn = saveLocalStorageState.bind(state);
   if (savedRange && isRangeValid(state, savedRange.start, savedRange.end)) {
     setSelectedRange(state, savedRange.start, savedRange.end);
     drawSelectedRange(state);
@@ -9060,9 +9080,9 @@ var setUpLocalStorage = (state, signal) => {
   });
   signal.addEventListener("abort", saveLocalStorageStateFn);
 };
-var saveLocalStorageState = function(keys) {
-  localStorage.setItem(keys.selectedRange, JSON.stringify(this.selectedRange));
-  localStorage.setItem(keys.scrollPosition, JSON.stringify({
+var saveLocalStorageState = function() {
+  localStorage.setItem(this.localStorageKeys.selectedRange, JSON.stringify(this.selectedRange));
+  localStorage.setItem(this.localStorageKeys.scrollPosition, JSON.stringify({
     top: this.contents.scrollTop,
     left: this.contents.scrollLeft
   }));
@@ -9270,7 +9290,7 @@ var fullScreenElement = (root) => root.fullscreenElement ?? root.webkitFullscree
 
 // grid-resizer.mjs
 var PROGRAM_FR = "--program-fr";
-var programFrLocalStorageKey = (state) => `${state.localStorageID} ${PROGRAM_FR}`;
+var programFrLocalStorageKey = (state) => `${state.localStorageKeys} ${PROGRAM_FR}`;
 var setUpGridResizer = (state) => {
   const stored = localStorage.getItem(programFrLocalStorageKey(state));
   if (stored !== null) {
@@ -9642,7 +9662,7 @@ var handlePointerDown = (state, event) => {
     showResults(state);
     scrollToLine(state, state.results, state.results.firstChild, resultRow + 1, resultsDividerIsVertical(state) ? state.contents.getBoundingClientRect().top - /** @type {HTMLElement} */
     target.closest("div").getBoundingClientRect().top : 0);
-    if (isMobile) {
+    if (state.isMobile) {
       return;
     }
     state.program.focus({
@@ -9652,7 +9672,7 @@ var handlePointerDown = (state, event) => {
     drawSelectedRange(state);
     return;
   }
-  if (isMobile) {
+  if (state.isMobile) {
     return;
   }
   state.program.focus({
@@ -10097,8 +10117,12 @@ var InternalState = class {
    */
   programRowToResultRow = /* @__PURE__ */ new Map();
   /* End RESULTS STATE */
-  /* SETTINGS */
+  /* SETTINGS, LOCAL STORAGE */
   // TODO add a way to change these settings 
+  /** @readonly @type {LocalStorageKeys} */
+  localStorageKeys;
+  /** @readonly @type {boolean} */
+  isMobile;
   /** Amount to wait before showing parse errors (avoids overwhelming the user with red squigglies while they're typing) */
   errorsDelayMilliseconds = 500;
   repeatedClickSpeedMilliseconds = 500;
@@ -10112,20 +10136,18 @@ var InternalState = class {
    * results will be shown below the code.
    */
   widthThresholdForVerticalGridSplitInCharacters = 80;
-  /* End SETTINGS */
+  /* End SETTINGS, LOCAL STORAGE */
   /* PERF */
   fastUpdates = 0;
   slowUpdates = 0;
   /** @readonly @type {number[]} */
   allUpdates = [];
   /* End PERF */
-  /** @readonly @type {string} */
-  localStorageID;
   /**
-   * 
-   * @param {DustFileEditor} editor 
-   * @param {CSSStyleSheet} styleSheet 
-   */
+  * 
+  * @param {DustFileEditor} editor 
+  * @param {CSSStyleSheet} styleSheet 
+  */
   constructor(editor, styleSheet2) {
     const context = new OffscreenCanvas(0, 0).getContext("2d");
     if (!context) {
@@ -10134,7 +10156,13 @@ var InternalState = class {
     this.textMeasurementContext = context;
     this.editor = editor;
     this.text = editor.textContent;
-    this.localStorageID = `dust-file-editor-storage file:"${editor.fileName}" id:"${editor.dataset.storageId}"`;
+    const keyPrefix = `dust-file-editor-storage file:"${editor.fileName}" id:"${editor.dataset.storageId}"`;
+    this.localStorageKeys = {
+      deviceMode: `${keyPrefix} desktop-mode`,
+      selectedRange: `${keyPrefix} selected-range`,
+      scrollPosition: `${keyPrefix} scroll-position`
+    };
+    this.isMobile = detectDeviceType(this.localStorageKeys.deviceMode, editor) === "mobile";
     this.shadowRoot = editor.attachShadow({
       mode: "closed",
       delegatesFocus: true
@@ -10166,7 +10194,7 @@ var InternalState = class {
     editor.addEventListener("keydown", handleKeyDown.bind(this), {
       capture: true
     });
-    if (isMobile) {
+    if (this.isMobile) {
       editor.addEventListener("beforeinput", handleBeforeInputOnMobile.bind(this));
     }
     setUpGridResizer(this);
@@ -10209,6 +10237,8 @@ console.warn(`TODO
 -appearance
   - fix function identifier declarations not being bold: their class name is "identifier_declaration identifier" -- it needs "function_called" also
   - could the line numbers be moved into the top-level grid? If so it would fix the issue of text scrolling under the line numbers
+  - flashing of line background color when clicking on a result/program line, and when the other side doesn't need to scroll, works on desktop but not mobile
+  - PWA on mobile: bottom is cut off (sometimes, not always??) when not full screen (need some alternate CSS units for vh) 
 
 - replace things like "\\lambda" with '\u03BB', <= to \u2264, etc, and add newline if text doesn't end with newline.
   - replacer code needs to update cursors/selections
@@ -10224,21 +10254,21 @@ var DustFileEditor = class extends HTMLElement {
       return;
     }
     this.#abortController?.abort();
-    const signal = (this.#abortController = new AbortController()).signal, focusOnLoad = this.dataset.focusOnLoad, toFocus = focusOnLoad !== void 0 && FOCUS_ON_LOAD_MAP.get(focusOnLoad);
-    if (this.classList.contains(RESULTS_SHOWN) && !resultsShown(this.#state)) {
+    const state = this.#state, signal = (this.#abortController = new AbortController()).signal, focusOnLoad = this.dataset.focusOnLoad, toFocus = focusOnLoad !== void 0 && FOCUS_ON_LOAD_MAP.get(focusOnLoad);
+    if (this.classList.contains(RESULTS_SHOWN) && !resultsShown(state)) {
       console.error(`Class name "${RESULTS_SHOWN}" is reserved for internal use`, this);
     }
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", this.update.bind(this), { signal });
-    setUpFullScreenButton(this.#state, signal);
-    setUpSelectionOnMobile(this.#state, signal);
-    updateStyle(this.#state);
-    updateContents(this.#state);
+    setUpFullScreenButton(state, signal);
+    setUpSelectionOnMobile(state, signal);
+    updateStyle(state);
+    updateContents(state);
     if (toFocus === void 0) {
       console.error(`Unrecognized "data-focus-on-load" value "${focusOnLoad}" (expected one of [${[...FOCUS_ON_LOAD_MAP.keys().map((it) => `"${it}"`)].join(", ")}])`, this);
     } else if (toFocus) {
-      this.#state[toFocus].focus({ preventScroll: true });
+      state[toFocus].focus({ preventScroll: true });
     }
-    setUpLocalStorage(this.#state, signal);
+    setUpLocalStorage(state, signal);
   }
   disconnectedCallback() {
     this.#abortController?.abort();
